@@ -1,0 +1,36 @@
+{
+  "name": "capstan",
+  "version": "0.0.1",
+  "description": "Multi-provider VPS lifecycle library — Hetzner, DigitalOcean, Linode, Vultr behind one TypeScript interface. Extracted from groundflare; pre-release placeholder. Real release coming.",
+  "keywords": [
+    "vps",
+    "hetzner",
+    "digitalocean",
+    "linode",
+    "vultr",
+    "cloud",
+    "provider",
+    "infrastructure"
+  ],
+  "homepage": "https://github.com/solcreek/capstan",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/solcreek/capstan.git"
+  },
+  "bugs": {
+    "url": "https://github.com/solcreek/capstan/issues"
+  },
+  "license": "MIT",
+  "author": "SolCreek",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "README.md",
+    "LICENSE"
+  ]
+}
