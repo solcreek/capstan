@@ -1,5 +1,52 @@
 # Changelog
 
+## v0.2.1 — `image` field on `EphemeralSessionOptions`
+
+Adds an `image` field to `EphemeralSessionOptions` so callers can
+override the OS image when opening an ephemeral session. Previously
+`openEphemeralSession()` always took the provider's built-in default
+(Ubuntu LTS); workloads that benchmark across kernels or need a
+specific base image had to bypass the helper.
+
+No breaking changes. The field is optional — existing callers keep
+the previous behavior.
+
+### Usage
+
+```ts
+await using session = await openEphemeralSession(provider, {
+  name: 'creek-bench',
+  size: 'ccx33',
+  region: 'fsn1',
+  publicKey: pubKey,
+  image: 'debian-12',  // new — falls back to provider default if omitted
+})
+```
+
+Accepted values are whatever the underlying provider's `createVPS()`
+accepts — `'ubuntu-24.04'`, `'debian-12'`, `'fedora-40'`, etc. on
+Hetzner; their respective ids on DigitalOcean / Linode / Vultr. See
+each provider's `DEFAULT_IMAGE` constant in `src/<provider>.ts` for
+the current fallback.
+
+### Why this exists
+
+Cross-kernel SQLite benchmarks on Hetzner ccx33 found OS image is
+the dominant tunable for the workload — debian-12 (kernel 6.1)
+outperforms ubuntu-24.04 (kernel 6.8) by ~10% on root fs and ~50%
+on loop-mounted ext4, same hardware. Capstan needed to expose that
+knob through the ephemeral-session helper so callers don't have to
+fall back to raw `createVPS()` to set it.
+
+### Tests
+
+2 new unit tests in `test/session.test.ts` — one for the field
+being forwarded when set, one confirming it's omitted from the
+`createVPS()` call when not set (so the provider's default
+behavior is unchanged).
+
+Total test count: 125 (was 123).
+
 ## v0.2.0 — Ephemeral session helper
 
 Adds `openEphemeralSession()` — a small helper that collapses the

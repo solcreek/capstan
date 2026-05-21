@@ -56,6 +56,13 @@ export interface EphemeralSessionOptions {
   readonly labels?: Record<string, string>
 
   /**
+   * Optional OS image override (e.g. `debian-12`, `ubuntu-22.04`).
+   * Falls back to the provider's current default (Ubuntu LTS) when
+   * unset.
+   */
+  readonly image?: string
+
+  /**
    * Poll behavior for `publicIP()`. Set to `false` to disable polling
    * entirely (publicIP() then rejects immediately if the VPS was
    * created without an IP). Default: poll every 2s for up to 60s.
@@ -142,6 +149,7 @@ export async function openEphemeralSession(
       sshKeyIds: [sshKey.id],
       ...(opts.userData !== undefined ? { userData: opts.userData } : {}),
       ...(opts.labels !== undefined ? { labels: opts.labels } : {}),
+      ...(opts.image !== undefined ? { image: opts.image } : {}),
     })
   } catch (createErr) {
     // Best-effort SSH key rollback — swallow secondary error so

@@ -122,6 +122,33 @@ describe('openEphemeralSession', () => {
     expect(passed.labels).toEqual({ purpose: 'bench' })
   })
 
+  it('forwards image override through to createVPS when set', async () => {
+    const provider = makeMockProvider()
+    const createSpy = vi.spyOn(provider, 'createVPS')
+    await openEphemeralSession(provider, {
+      name: 'creek-test',
+      size: 'cx23',
+      region: 'fsn1',
+      publicKey: 'ssh-ed25519 AAA...',
+      image: 'debian-12',
+    })
+    const passed = createSpy.mock.calls[0]![0]
+    expect(passed.image).toBe('debian-12')
+  })
+
+  it('omits image from createVPS when not set (provider default applies)', async () => {
+    const provider = makeMockProvider()
+    const createSpy = vi.spyOn(provider, 'createVPS')
+    await openEphemeralSession(provider, {
+      name: 'creek-test',
+      size: 'cx23',
+      region: 'fsn1',
+      publicKey: 'ssh-ed25519 AAA...',
+    })
+    const passed = createSpy.mock.calls[0]![0]
+    expect('image' in passed).toBe(false)
+  })
+
   it('does not call createVPS if uploadSSHKey fails (no resource leak)', async () => {
     const provider = makeMockProvider({ uploadFails: true })
     await expect(
