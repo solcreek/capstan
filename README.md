@@ -92,15 +92,45 @@ interface Provider {
 
 See [`src/types.ts`](./src/types.ts) for the value types (`Account`, `Size`, `Region`, `SSHKey`, `VPS`, `ProvisionOptions`, `ProviderError`).
 
+## Ephemeral sessions (v0.2+)
+
+For lab tooling and benchmark scripts — anything that spins up a VPS, does some work, and tears down — the boilerplate is the same every time: upload SSH key, create VPS, poll for IP, remember to clean both up on every code path including SIGINT. `openEphemeralSession()` collapses that into one call with automatic cleanup via `await using`:
+
+```ts
+import { openEphemeralSession, HetznerProvider } from 'capstan'
+
+const provider = new HetznerProvider({ token: process.env.HETZNER_API_TOKEN! })
+
+await using session = await openEphemeralSession(provider, {
+  name: `bench-${Date.now()}`,
+  size: 'cx43',
+  region: 'fsn1',
+  publicKey: myPublicKey,        // you generate the keypair locally
+  userData: '#cloud-config\n...', // optional cloud-init
+})
+
+const ip = await session.publicIP()   // polls if necessary
+// ... ssh root@ip, run your work ...
+
+// On scope exit: VPS is destroyed, SSH key is deleted.
+// On createVPS failure: SSH key is rolled back automatically.
+// Both cleanup steps are best-effort and never throw.
+```
+
+If your codebase can't use `await using` (older targets, REPL), call `await session.dispose()` from a `finally` block.
+
+Requires Node 22+ and TypeScript 5.2+ — same as capstan core.
+
 ## Why "capstan"?
 
 A capstan is the rotating drum on a ship used to hoist heavy things — anchors, sails, cables. This library hoists servers up and down. The metaphor lands.
 
 ## Roadmap
 
-- `0.1.x` — provider abstraction (this release)
-- `0.2.x` — cloud-init template helpers (when needed by a downstream)
-- `0.3.x` — optional bootstrap-stage orchestrator (auth → ssh-key → provision → wait-ssh → cloud-init), lifted from groundflare
+- `0.1.x` — provider abstraction (foundation)
+- `0.2.x` — **ephemeral session helper** (this release): `openEphemeralSession()` + `await using` cleanup
+- `0.3.x` — cloud-init profile registry (generic Go/Node/Python boxes vs runtime-specific YAMLs)
+- `0.4.x` — optional bootstrap-stage orchestrator (auth → ssh-key → provision → wait-ssh → cloud-init), lifted from groundflare
 - Provider additions opportunistic — Scaleway, OVH, Backblaze Compute, Fly Machines, etc.
 
 ## License

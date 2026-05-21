@@ -30,6 +30,12 @@ export {
 } from './registry.js'
 
 export {
+  openEphemeralSession,
+  type EphemeralSession,
+  type EphemeralSessionOptions,
+} from './session.js'
+
+export {
   ProviderError,
   type Account,
   type Provider,

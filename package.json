@@ -1,6 +1,6 @@
 {
   "name": "capstan",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Multi-provider VPS lifecycle library — Hetzner, DigitalOcean, Linode, Vultr behind one TypeScript interface.",
   "keywords": [
     "vps",
