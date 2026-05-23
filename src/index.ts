@@ -36,6 +36,16 @@ export {
 } from './session.js'
 
 export {
+  recommendPlacement,
+  type Geography,
+  type Placement,
+  type PostureInput,
+  type Recommendation,
+  type SlaTier,
+  type Workload,
+} from './posture.js'
+
+export {
   ProviderError,
   type Account,
   type Provider,

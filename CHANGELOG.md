@@ -1,5 +1,54 @@
 # Changelog
 
+## v0.3.0 — `recommendPlacement` posture module
+
+Adds a new `posture` module — a pure-function placement recommender that
+maps `(geography, workload, slaTier)` to an ordered `(provider, region, size)`
+recommendation plus operational caveats.
+
+```ts
+import { recommendPlacement } from 'capstan'
+
+const r = recommendPlacement({
+  geography: 'japan',
+  workload: 'cpu-latency',
+  sla: 'standard',
+})
+// r.primary    = { provider: 'linode', region: 'ap-northeast', size: 'g7-premium-4' }
+// r.fallbacks  = [ Linode jp-tyo-3, Linode jp-osa ]
+// r.caveats    = ['Linode g7-premium has elevated SSH-provisioning ...']
+```
+
+14 customer geographies × 4 workload classes × 3 SLA tiers = 168 placement
+decisions encoded. Caveats surface known operational gotchas (Linode Sydney
+structural slowness, Linode g7 reliability budget, Hetzner Singapore pricing
+premium without perf gain, ash placement-unavailability hot windows).
+
+### Why this exists
+
+Capstan abstracts provider APIs but doesn't say which provider+region+size
+a given workload should go to. That decision used to live in implicit
+operator knowledge or ad-hoc per-project tables. With per-region L3 perf
+characterization (see internal `lab/HETZNER-REGIONS-MATRIX.md` and
+`lab/LINODE-REGIONS-MATRIX.md`) we now have the data to encode it as
+a function.
+
+The module is pure data + decision logic; it does not call any provider
+API. Live availability (placement 412s, region restrictions, account
+gating) is a separate concern — use the returned `fallbacks` array as
+the retry ladder when `createVPS()` fails with a retryable error.
+
+Data tables snapshot: 2026-05-22. Re-verify quarterly.
+
+### Subpath import
+
+```ts
+import { recommendPlacement } from 'capstan/posture'
+```
+
+Type re-exports: `Geography`, `Workload`, `SlaTier`, `PostureInput`,
+`Placement`, `Recommendation`.
+
 ## v0.2.1 — `image` field on `EphemeralSessionOptions`
 
 Adds an `image` field to `EphemeralSessionOptions` so callers can
