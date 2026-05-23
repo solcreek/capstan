@@ -63,7 +63,7 @@ That's it. No deployment, no bootstrap-stage orchestration, no Worker semantics.
 | **Linode** | ✓ | ✓ | ✓ | ✓ | ✓ | 22 |
 | **Vultr** | ✓ | ✓ | ✓ | ✓ | ✓ | 27 |
 
-107 unit tests, all passing. No fetch goes out during tests — providers accept a `fetchImpl` injection.
+314 unit tests, all passing. No fetch goes out during tests — providers accept a `fetchImpl` injection.
 
 ## Provider interface
 
@@ -121,6 +121,32 @@ If your codebase can't use `await using` (older targets, REPL), call `await sess
 
 Requires Node 22+ and TypeScript 5.2+ — same as capstan core.
 
+## Placement posture (v0.3+)
+
+Capstan abstracts provider APIs but doesn't, on its own, say WHERE a given workload should go. `recommendPlacement()` answers that question — given a customer geography + workload class + SLA tier, it returns an ordered (provider, region, size) recommendation plus any operational caveats the caller should surface.
+
+```ts
+import { recommendPlacement } from 'capstan'
+
+const r = recommendPlacement({
+  geography: 'japan',
+  workload: 'cpu-latency',
+  sla: 'standard',
+})
+// r.primary    = { provider: 'linode', region: 'ap-northeast',
+//                  size: 'g7-premium-4' }
+// r.fallbacks  = [Linode jp-tyo-3, Linode jp-osa]
+// r.caveats    = ['Linode g7-premium has elevated SSH-provisioning ...']
+```
+
+The module is pure catalog + decision logic — it does not call any provider API. Use the `fallbacks` array as the retry ladder when `createVPS()` returns a retryable error.
+
+14 geographies (`eu-central`, `eu-north`, `eu-west`, `eu-south`, `us-east`, `us-central`, `us-west`, `canada`, `singapore`, `japan`, `india`, `indonesia`, `australia`, `latam`) × 4 workload classes (`io-multitenant`, `cpu-latency`, `cpu-throughput`, `general`) × 3 SLA tiers (`best-effort`, `standard`, `premium`) = 168 placement decisions encoded.
+
+Data tables snapshot: 2026-05-22. Re-verify quarterly — provider pricing, region availability, and tier characteristics drift.
+
+Subpath import: `import { recommendPlacement } from 'capstan/posture'`.
+
 ## Why "capstan"?
 
 A capstan is the rotating drum on a ship used to hoist heavy things — anchors, sails, cables. This library hoists servers up and down. The metaphor lands.
@@ -128,9 +154,10 @@ A capstan is the rotating drum on a ship used to hoist heavy things — anchors,
 ## Roadmap
 
 - `0.1.x` — provider abstraction (foundation)
-- `0.2.x` — **ephemeral session helper** (this release): `openEphemeralSession()` + `await using` cleanup
-- `0.3.x` — cloud-init profile registry (generic Go/Node/Python boxes vs runtime-specific YAMLs)
-- `0.4.x` — optional bootstrap-stage orchestrator (auth → ssh-key → provision → wait-ssh → cloud-init), lifted from groundflare
+- `0.2.x` — ephemeral session helper: `openEphemeralSession()` + `await using` cleanup
+- `0.3.x` — **placement posture** (this release): `recommendPlacement()` over a static catalog of regions, tiers, and operational caveats
+- `0.4.x` — cloud-init profile registry (generic Go/Node/Python boxes vs runtime-specific YAMLs)
+- `0.5.x` — optional bootstrap-stage orchestrator (auth → ssh-key → provision → wait-ssh → cloud-init), lifted from groundflare
 - Provider additions opportunistic — Scaleway, OVH, Backblaze Compute, Fly Machines, etc.
 
 ## License
