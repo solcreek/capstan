@@ -1,0 +1,31 @@
+{
+  "name": "linode",
+  "displayName": "Linode (Akamai)",
+  "baseUrl": "https://api.linode.com/v4",
+  "defaultImage": "linode/ubuntu24.04",
+  "userDataEncoding": "base64",
+  "statusMap": {
+    "provisioning": "initializing",
+    "booting": "initializing",
+    "running": "running",
+    "offline": "stopped",
+    "shutting_down": "stopped",
+    "rebooting": "stopped",
+    "deleting": "deleting"
+  },
+  "priceCents": {
+    "g6-nanode-1": 500,
+    "g6-standard-1": 1200,
+    "g6-standard-2": 2400,
+    "g6-standard-4": 4800,
+    "g6-standard-6": 9600,
+    "g6-standard-8": 19200,
+    "g6-dedicated-2": 3600,
+    "g6-dedicated-4": 7200,
+    "g6-dedicated-8": 14400,
+    "g7-premium-2": 4300,
+    "g7-premium-4": 8600,
+    "g7-premium-8": 17200
+  },
+  "priceCurrency": "USD"
+}

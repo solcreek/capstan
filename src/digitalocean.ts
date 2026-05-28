@@ -25,9 +25,10 @@ import {
   type VPSStatus,
 } from './types.js'
 import { HttpProvider, type HttpProviderOptions } from './http-base.js'
+import spec from '../specs/digitalocean.json' with { type: 'json' }
 
-const DO_API_BASE = 'https://api.digitalocean.com/v2'
-const DEFAULT_IMAGE = 'ubuntu-24-04-x64'
+const DO_API_BASE = spec.baseUrl
+const DEFAULT_IMAGE = spec.defaultImage
 
 export type DigitalOceanClientOptions = HttpProviderOptions
 
@@ -271,18 +272,10 @@ function toVPS(d: DODroplet): VPS {
 
 type Mutable<T> = { -readonly [K in keyof T]: T[K] }
 
+const STATUS_MAP = spec.statusMap as Record<string, VPSStatus>
+
 function mapStatus(raw: string): VPSStatus {
-  switch (raw) {
-    case 'new':
-      return 'initializing'
-    case 'active':
-      return 'running'
-    case 'off':
-    case 'archive':
-      return 'stopped'
-    default:
-      return 'unknown'
-  }
+  return STATUS_MAP[raw] ?? 'unknown'
 }
 
 // ─── Error parsing ────────────────────────────────────────────────
@@ -311,17 +304,6 @@ function pickErrorMessage(body: unknown): string {
   return 'no message'
 }
 
-// ─── Static price table (USD cents/month) ─────────────────────────
-
-const DO_PRICE_TABLE = new Map<string, number>([
-  ['s-1vcpu-512mb-10gb', 400],
-  ['s-1vcpu-1gb', 600],
-  ['s-1vcpu-2gb', 1200],
-  ['s-2vcpu-2gb', 1800],
-  ['s-2vcpu-4gb', 2400],
-  ['s-4vcpu-8gb', 4800],
-  ['s-8vcpu-16gb', 9600],
-  ['c-2', 4200],
-  ['c-4', 8400],
-  ['c-8', 16800],
-])
+const DO_PRICE_TABLE = new Map<string, number>(
+  Object.entries(spec.priceCents)
+)

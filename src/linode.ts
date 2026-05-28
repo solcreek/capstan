@@ -41,9 +41,10 @@ import {
   type VPSStatus,
 } from './types.js'
 import { HttpProvider, type HttpProviderOptions } from './http-base.js'
+import spec from '../specs/linode.json' with { type: 'json' }
 
-const LINODE_API_BASE = 'https://api.linode.com/v4'
-const DEFAULT_IMAGE = 'linode/ubuntu24.04'
+const LINODE_API_BASE = spec.baseUrl
+const DEFAULT_IMAGE = spec.defaultImage
 
 export type LinodeClientOptions = HttpProviderOptions
 
@@ -386,37 +387,12 @@ function isPrivateIPv4(ip: string): boolean {
 
 type Mutable<T> = { -readonly [K in keyof T]: T[K] }
 
+const STATUS_MAP = spec.statusMap as Record<string, VPSStatus>
+
 function mapStatus(raw: string): VPSStatus {
-  switch (raw) {
-    case 'provisioning':
-    case 'booting':
-      return 'initializing'
-    case 'running':
-      return 'running'
-    case 'offline':
-    case 'shutting_down':
-    case 'rebooting':
-      return 'stopped'
-    case 'deleting':
-      return 'deleting'
-    default:
-      return 'unknown'
-  }
+  return STATUS_MAP[raw] ?? 'unknown'
 }
 
-// ─── Static price table (USD cents/month) ─────────────────────────
-//
-// Snapshot of common Linode shared- and dedicated-CPU tiers. Refreshed
-// manually; estimateMonthlyCost returns 0 for sizes not listed so
-// callers can treat 0 as "no quote".
-const LINODE_PRICE_TABLE = new Map<string, number>([
-  ['g6-nanode-1', 500],
-  ['g6-standard-1', 1200],
-  ['g6-standard-2', 2400],
-  ['g6-standard-4', 4800],
-  ['g6-standard-6', 9600],
-  ['g6-standard-8', 19200],
-  ['g6-dedicated-2', 3600],
-  ['g6-dedicated-4', 7200],
-  ['g6-dedicated-8', 14400],
-])
+const LINODE_PRICE_TABLE = new Map<string, number>(
+  Object.entries(spec.priceCents)
+)

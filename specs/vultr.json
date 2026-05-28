@@ -1,0 +1,28 @@
+{
+  "name": "vultr",
+  "displayName": "Vultr",
+  "baseUrl": "https://api.vultr.com/v2",
+  "defaultImage": "2284",
+  "userDataEncoding": "base64",
+  "statusMap": {
+    "pending": "initializing",
+    "active/running": "running",
+    "active/stopped": "stopped",
+    "active/none": "initializing",
+    "suspended": "unknown",
+    "closed": "unknown"
+  },
+  "priceCents": {
+    "vc2-1c-1gb": 600,
+    "vc2-1c-2gb": 1200,
+    "vc2-2c-2gb": 1800,
+    "vc2-2c-4gb": 2400,
+    "vc2-4c-8gb": 4800,
+    "vc2-6c-16gb": 9600,
+    "vc2-8c-32gb": 19200,
+    "vhf-1c-1gb": 600,
+    "vhf-2c-4gb": 2400,
+    "vhf-4c-8gb": 4800
+  },
+  "priceCurrency": "USD"
+}

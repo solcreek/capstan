@@ -1,0 +1,26 @@
+{
+  "name": "digitalocean",
+  "displayName": "DigitalOcean",
+  "baseUrl": "https://api.digitalocean.com/v2",
+  "defaultImage": "ubuntu-24-04-x64",
+  "userDataEncoding": "raw",
+  "statusMap": {
+    "new": "initializing",
+    "active": "running",
+    "off": "stopped",
+    "archive": "stopped"
+  },
+  "priceCents": {
+    "s-1vcpu-512mb-10gb": 400,
+    "s-1vcpu-1gb": 600,
+    "s-1vcpu-2gb": 1200,
+    "s-2vcpu-2gb": 1800,
+    "s-2vcpu-4gb": 2400,
+    "s-4vcpu-8gb": 4800,
+    "s-8vcpu-16gb": 9600,
+    "c-2": 4200,
+    "c-4": 8400,
+    "c-8": 16800
+  },
+  "priceCurrency": "USD"
+}

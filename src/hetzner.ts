@@ -37,9 +37,10 @@ import {
   type VPSStatus,
 } from './types.js'
 import { HttpProvider, type HttpProviderOptions } from './http-base.js'
+import spec from '../specs/hetzner.json' with { type: 'json' }
 
-const HETZNER_API_BASE = 'https://api.hetzner.cloud/v1'
-const DEFAULT_IMAGE = 'ubuntu-24.04'
+const HETZNER_API_BASE = spec.baseUrl
+const DEFAULT_IMAGE = spec.defaultImage
 
 export type HetznerClientOptions = HttpProviderOptions
 
@@ -272,21 +273,10 @@ function toVPS(s: HetznerServer): VPS {
 
 type Mutable<T> = { -readonly [K in keyof T]: T[K] }
 
+const STATUS_MAP = spec.statusMap as Record<string, VPSStatus>
+
 function mapStatus(raw: string): VPSStatus {
-  switch (raw) {
-    case 'initializing':
-    case 'starting':
-      return 'initializing'
-    case 'running':
-      return 'running'
-    case 'stopping':
-    case 'off':
-      return 'stopped'
-    case 'deleting':
-      return 'deleting'
-    default:
-      return 'unknown'
-  }
+  return STATUS_MAP[raw] ?? 'unknown'
 }
 
 // ─── Error parsing ─────────────────────────────────────────────────
@@ -333,35 +323,6 @@ function synthesizeAccountId(token: string): string {
   return `hetzner-${hash.toString(36)}`
 }
 
-// ─── Static price table ────────────────────────────────────────────
-
-/**
- * Snapshot of common Hetzner shared-vCPU sizes, in EUR cents/month
- * (gross, hel1/fsn1 EU pricing). Refreshed manually against
- * api.hetzner.cloud/v1/server_types; estimateMonthlyCost falls back to
- * 0 for sizes not in the table. The CLI's `groundflare estimate`
- * should call `listSizes()` for live numbers when an API token is
- * available.
- *
- * Last refreshed: 2026-04-17. Note that Hetzner deprecated the cx22/
- * cx32/cx42/cx52 line in favour of cx23+; ARM (cax) and x86 (cpx) had
- * across-the-board price increases since v0.1.
- */
-const HETZNER_PRICE_TABLE = new Map<string, number>([
-  // Shared x86, current gen (cx22 line deprecated 2026Q1):
-  ['cx23', 499],
-  ['cx33', 799],
-  ['cx43', 1399],
-  ['cx53', 2649],
-  // Shared x86, higher-perf tier (cpx):
-  ['cpx11', 599],
-  ['cpx21', 1099],
-  ['cpx31', 2049],
-  ['cpx41', 3799],
-  ['cpx51', 8349],
-  // Shared ARM (Ampere Altra) — cheapest tier for low-traffic workers:
-  ['cax11', 549],
-  ['cax21', 949],
-  ['cax31', 1849],
-  ['cax41', 3699],
-])
+const HETZNER_PRICE_TABLE = new Map<string, number>(
+  Object.entries(spec.priceCents)
+)

@@ -1,0 +1,41 @@
+{
+  "name": "hetzner",
+  "displayName": "Hetzner Cloud",
+  "baseUrl": "https://api.hetzner.cloud/v1",
+  "defaultImage": "ubuntu-24.04",
+  "userDataEncoding": "raw",
+  "statusMap": {
+    "initializing": "initializing",
+    "starting": "initializing",
+    "running": "running",
+    "stopping": "stopped",
+    "off": "stopped",
+    "deleting": "deleting"
+  },
+  "priceCents": {
+    "cx22": 449,
+    "cx23": 499,
+    "cx32": 849,
+    "cx33": 799,
+    "cx42": 1399,
+    "cx43": 1399,
+    "cx52": 2649,
+    "cx53": 2649,
+    "cpx11": 599,
+    "cpx21": 1099,
+    "cpx31": 2049,
+    "cpx41": 3799,
+    "cpx51": 8349,
+    "cax11": 549,
+    "cax21": 949,
+    "cax31": 1849,
+    "cax41": 3699,
+    "ccx13": 1449,
+    "ccx23": 2599,
+    "ccx33": 4849,
+    "ccx43": 9199,
+    "ccx53": 17399,
+    "ccx63": 33599
+  },
+  "priceCurrency": "EUR"
+}

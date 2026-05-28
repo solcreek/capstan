@@ -60,9 +60,10 @@ import {
   type VPSStatus,
 } from './types.js'
 import { HttpProvider, type HttpProviderOptions } from './http-base.js'
+import spec from '../specs/vultr.json' with { type: 'json' }
 
-const VULTR_API_BASE = 'https://api.vultr.com/v2'
-const DEFAULT_OS_ID = 2284 // Ubuntu 24.04 LTS x64 (as of 2026-04)
+const VULTR_API_BASE = spec.baseUrl
+const DEFAULT_OS_ID = parseInt(spec.defaultImage)
 
 export type VultrClientOptions = HttpProviderOptions
 
@@ -370,30 +371,16 @@ type Mutable<T> = { -readonly [K in keyof T]: T[K] }
  * interface promises — both are needed because `active + stopped`
  * and `active + running` are very different states.
  */
+const STATUS_MAP = spec.statusMap as Record<string, VPSStatus>
+
 function mapStatus(status: string, powerStatus?: string): VPSStatus {
-  if (status === 'pending') return 'initializing'
-  if (status === 'active') {
-    if (powerStatus === 'running') return 'running'
-    if (powerStatus === 'stopped') return 'stopped'
-    // Active but no power_status yet = still booting from the API's
-    // perspective.
-    return 'initializing'
+  if (status !== 'active') {
+    return STATUS_MAP[status] ?? 'unknown'
   }
-  if (status === 'suspended' || status === 'closed') return 'unknown'
-  return 'unknown'
+  const compoundKey = `active/${powerStatus ?? 'none'}`
+  return STATUS_MAP[compoundKey] ?? 'unknown'
 }
 
-// ─── Static price table (USD cents/month) ─────────────────────────
-//
-// Snapshot of common Vultr Cloud Compute (vc2) shared-CPU tiers.
-// Refreshed manually; estimateMonthlyCost returns 0 for sizes not
-// listed so callers can treat 0 as "no quote".
-const VULTR_PRICE_TABLE = new Map<string, number>([
-  ['vc2-1c-1gb', 600],
-  ['vc2-1c-2gb', 1200],
-  ['vc2-2c-2gb', 1800],
-  ['vc2-2c-4gb', 2400],
-  ['vc2-4c-8gb', 4800],
-  ['vc2-6c-16gb', 9600],
-  ['vc2-8c-32gb', 19200],
-])
+const VULTR_PRICE_TABLE = new Map<string, number>(
+  Object.entries(spec.priceCents)
+)
