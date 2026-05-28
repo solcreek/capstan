@@ -1,0 +1,113 @@
+{
+  "geoRouting": {
+    "eu-central": [
+      { "provider": "hetzner", "region": "fsn1" },
+      { "provider": "hetzner", "region": "nbg1" },
+      { "provider": "linode", "region": "de-fra-2" },
+      { "provider": "linode", "region": "eu-central" },
+      { "provider": "linode", "region": "nl-ams" }
+    ],
+    "eu-north": [
+      { "provider": "hetzner", "region": "hel1" },
+      { "provider": "linode", "region": "se-sto" }
+    ],
+    "eu-west": [
+      { "provider": "linode", "region": "gb-lon" },
+      { "provider": "linode", "region": "eu-west" },
+      { "provider": "linode", "region": "fr-par-2" },
+      { "provider": "linode", "region": "fr-par" }
+    ],
+    "eu-south": [
+      { "provider": "linode", "region": "it-mil" },
+      { "provider": "linode", "region": "es-mad" }
+    ],
+    "us-east": [
+      { "provider": "hetzner", "region": "ash" },
+      { "provider": "linode", "region": "us-iad-2" },
+      { "provider": "linode", "region": "us-east" },
+      { "provider": "linode", "region": "us-iad" }
+    ],
+    "us-central": [
+      { "provider": "linode", "region": "us-ord" },
+      { "provider": "linode", "region": "us-central" }
+    ],
+    "us-west": [
+      { "provider": "hetzner", "region": "hil" },
+      { "provider": "linode", "region": "us-west" },
+      { "provider": "linode", "region": "us-lax" },
+      { "provider": "linode", "region": "us-sea" }
+    ],
+    "canada": [
+      { "provider": "linode", "region": "ca-central" }
+    ],
+    "singapore": [
+      { "provider": "hetzner", "region": "sin" },
+      { "provider": "linode", "region": "sg-sin-2" },
+      { "provider": "linode", "region": "ap-south" }
+    ],
+    "japan": [
+      { "provider": "linode", "region": "ap-northeast" },
+      { "provider": "linode", "region": "jp-tyo-3" },
+      { "provider": "linode", "region": "jp-osa" }
+    ],
+    "india": [
+      { "provider": "linode", "region": "in-bom-2" },
+      { "provider": "linode", "region": "ap-west" },
+      { "provider": "linode", "region": "in-maa" }
+    ],
+    "indonesia": [
+      { "provider": "linode", "region": "id-cgk" }
+    ],
+    "australia": [
+      { "provider": "linode", "region": "ap-southeast" }
+    ],
+    "latam": [
+      { "provider": "linode", "region": "br-gru" }
+    ]
+  },
+  "tierMap": {
+    "hetzner": {
+      "io-multitenant": { "best-effort": "cx23", "standard": "cx43", "premium": "ccx33" },
+      "cpu-latency": { "best-effort": "cpx21", "standard": "ccx13", "premium": "ccx33" },
+      "cpu-throughput": { "best-effort": "cax11", "standard": "cax21", "premium": "ccx33" },
+      "general": { "best-effort": "cx23", "standard": "cx43", "premium": "ccx33" }
+    },
+    "linode": {
+      "io-multitenant": { "best-effort": "g6-nanode-1", "standard": "g6-standard-4", "premium": "g6-dedicated-4" },
+      "cpu-latency": { "best-effort": "g6-standard-2", "standard": "g7-premium-4", "premium": "g7-premium-4" },
+      "cpu-throughput": { "best-effort": "g6-standard-2", "standard": "g6-standard-4", "premium": "g6-standard-6" },
+      "general": { "best-effort": "g6-nanode-1", "standard": "g6-standard-4", "premium": "g6-dedicated-4" }
+    },
+    "digitalocean": {
+      "io-multitenant": { "best-effort": "s-1vcpu-1gb", "standard": "s-2vcpu-4gb", "premium": "s-4vcpu-8gb" },
+      "cpu-latency": { "best-effort": "s-1vcpu-1gb", "standard": "c-2", "premium": "c-4" },
+      "cpu-throughput": { "best-effort": "s-1vcpu-1gb", "standard": "c-2", "premium": "c-4" },
+      "general": { "best-effort": "s-1vcpu-1gb", "standard": "s-2vcpu-4gb", "premium": "s-4vcpu-8gb" }
+    },
+    "vultr": {
+      "io-multitenant": { "best-effort": "vc2-1c-1gb", "standard": "vc2-2c-4gb", "premium": "vc2-4c-8gb" },
+      "cpu-latency": { "best-effort": "vc2-1c-1gb", "standard": "vhf-2c-4gb", "premium": "vhf-4c-8gb" },
+      "cpu-throughput": { "best-effort": "vc2-1c-1gb", "standard": "vhf-2c-4gb", "premium": "vhf-4c-8gb" },
+      "general": { "best-effort": "vc2-1c-1gb", "standard": "vc2-2c-4gb", "premium": "vc2-4c-8gb" }
+    }
+  },
+  "cellCaveats": {
+    "linode/ap-southeast": [
+      "Linode Sydney is structurally slower than other regions on the same SKU (~47k vs ~80k ops/s for SQLite multi-tenant writes). Tier upgrades — g6-dedicated, g6-standard-6, g7/g8 — do not close the gap. Newer-gen tiers are not yet available in this region. For latency-tolerant workloads, consider routing to Tokyo + cross-Pacific RTT."
+    ],
+    "hetzner/sin": [
+      "Hetzner Singapore charges ~+55% vs EU central pricing for ~17% lower SQLite-class throughput. Pay for presence, not performance."
+    ],
+    "hetzner/ash": [
+      "Hetzner ccx33 in ash has shown elevated 412 placement-unavailable rates during US business hours. Build retry-with-fallback to hil."
+    ]
+  },
+  "sizeCaveats": {
+    "linode/g6-dedicated-4": [
+      "Linode g6-dedicated-* may require Support approval on new accounts. If createInstance returns 400 plan-limit, open a Support ticket and retry within ~24h."
+    ],
+    "linode/g7-premium-4": [
+      "Linode g7-premium has elevated SSH-provisioning failure rates (17-50% depending on region). Build retry-with-backoff allowing 2-3× provisioning attempts."
+    ]
+  }
+}
