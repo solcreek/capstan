@@ -1,58 +1,88 @@
 # capstan
 
-> Multi-provider VPS lifecycle library — Hetzner, DigitalOcean, Linode, Vultr behind one TypeScript interface.
+> Multi-provider VPS lifecycle library — Hetzner, DigitalOcean, Linode, Vultr. TypeScript + Go, one shared spec.
 
 ```bash
-npm i capstan
+npm i capstan            # TypeScript
+go get github.com/solcreek/capstan  # Go
 ```
+
+## Quick start
+
+### TypeScript
 
 ```ts
 import { HetznerProvider } from 'capstan'
 
 const p = new HetznerProvider({ token: process.env.HETZNER_API_TOKEN! })
 
-// Provision
 const vps = await p.createVPS({
   name: 'my-server',
   size: 'cx33',
   region: 'fsn1',
   sshKeyIds: [(await p.uploadSSHKey({ name: 'mykey', publicKey })).id],
-  userData: '#cloud-config\nruncmd:\n  - echo hello > /work/hello\n',
+  userData: '#cloud-config\nruncmd:\n  - echo hello\n',
 })
 
-// ... do stuff over SSH to vps.publicIPv4 ...
-
-// Tear down
 await p.destroyVPS(vps.id)
 ```
 
-Same code, different provider:
+### Go
+
+```go
+import "github.com/solcreek/capstan"
+
+spec := capstan.Spec(capstan.Hetzner)
+fmt.Println(spec.BaseURL)           // https://api.hetzner.cloud/v1
+fmt.Println(spec.MapStatus("running")) // running
+fmt.Println(spec.EstimateMonthlyCost("cx23")) // 499
+
+r, _ := capstan.RecommendPlacement("us-east", "io-multitenant", "standard")
+fmt.Println(r.Primary) // {hetzner ash cx43}
+```
+
+Same provider, different language:
 
 ```ts
-import { DigitalOceanProvider, LinodeProvider, VultrProvider } from 'capstan'
-// Or pick at runtime:
 import { createProvider } from 'capstan/registry'
 const p = createProvider('digitalocean', { token: process.env.DO_TOKEN! })
 ```
+
+## Architecture
+
+```
+specs/                     ← single source of truth (JSON)
+├── hetzner.json              base URL, status map, pricing
+├── digitalocean.json
+├── linode.json
+├── vultr.json
+└── posture.json              geo routing, tier map, caveats
+
+src/                       ← TypeScript implementation (npm)
+  imports specs/*.json
+
+*.go                       ← Go implementation (//go:embed specs/)
+  imports specs/*.json
+```
+
+Provider metadata lives in `specs/*.json`. Both languages read the same files — update a spec, both implementations stay in sync.
 
 ## What it is
 
 One typed `Provider` interface with four working backends. Every implementation:
 
-- Authenticates via API token; reports a normalized `Account`
-- Lists `Size`s and `Region`s with monthly pricing in EUR/USD cents
+- Authenticates via API token
+- Lists sizes and regions with pricing in cents
 - Uploads / lists / deletes SSH keys
 - Creates / gets / lists / destroys VPSes with cloud-init `userData`
-- Surfaces a normalized `ProviderError` (with `code`, `status`, `retryable`)
-- Quotes monthly cost up-front via `estimateMonthlyCost()`
-
-That's it. No deployment, no bootstrap-stage orchestration, no Worker semantics. Layer those on top.
+- Surfaces a normalized error type (with `code`, `status`, `retryable`)
+- Quotes monthly cost via `estimateMonthlyCost()`
 
 ## What it isn't
 
-- **Not Terraform / Pulumi / OpenTofu.** No state file, no diff, no plan. Just imperative provider calls.
-- **Not a CLI.** Library only. (CLI tools that consume capstan: [groundflare](https://github.com/solcreek/groundflare) — extracting to depend on this; future internal Creek tooling.)
-- **Not a deployment tool.** It provisions the box. What you do over SSH after is your problem.
+- **Not Terraform / Pulumi.** No state file, no diff, no plan. Imperative provider calls.
+- **Not a CLI.** Library only.
+- **Not a deployment tool.** Provisions the box. What runs on it is your concern.
 
 ## Providers
 
@@ -63,9 +93,9 @@ That's it. No deployment, no bootstrap-stage orchestration, no Worker semantics.
 | **Linode** | ✓ | ✓ | ✓ | ✓ | ✓ | 22 |
 | **Vultr** | ✓ | ✓ | ✓ | ✓ | ✓ | 27 |
 
-314 unit tests, all passing. No fetch goes out during tests — providers accept a `fetchImpl` injection.
+327 tests total (314 TypeScript + 13 Go). No network calls in tests — providers accept a `fetchImpl` injection (TS) and specs are embedded (Go).
 
-## Provider interface
+## Provider interface (TypeScript)
 
 ```ts
 interface Provider {
@@ -82,7 +112,7 @@ interface Provider {
   deleteSSHKey(id: string): Promise<void>
 
   createVPS(opts: ProvisionOptions): Promise<VPS>
-  getVPS(id: string): Promise<VPS | null>     // null when missing
+  getVPS(id: string): Promise<VPS | null>
   listVPS(): Promise<readonly VPS[]>
   destroyVPS(id: string): Promise<void>
 
@@ -90,11 +120,28 @@ interface Provider {
 }
 ```
 
-See [`src/types.ts`](./src/types.ts) for the value types (`Account`, `Size`, `Region`, `SSHKey`, `VPS`, `ProvisionOptions`, `ProviderError`).
+See [`src/types.ts`](./src/types.ts) for all value types.
 
-## Ephemeral sessions (v0.2+)
+## Go types
 
-For lab tooling and benchmark scripts — anything that spins up a VPS, does some work, and tears down — the boilerplate is the same every time: upload SSH key, create VPS, poll for IP, remember to clean both up on every code path including SIGINT. `openEphemeralSession()` collapses that into one call with automatic cleanup via `await using`:
+```go
+type ProviderSpec struct {
+    Name, DisplayName, BaseURL, DefaultImage, UserDataEncoding string
+    StatusMap   map[string]string
+    PriceCents  map[string]int
+}
+
+func Spec(name ProviderName) *ProviderSpec
+func (s *ProviderSpec) MapStatus(raw string) ServerStatus
+func (s *ProviderSpec) EstimateMonthlyCost(plan string) int
+func (s *ProviderSpec) ResolveImage(image string) string
+
+func RecommendPlacement(geography, workload, sla) (*Recommendation, error)
+```
+
+## Ephemeral sessions (TypeScript, v0.2+)
+
+For scripts that spin up a VPS, do work, and tear down — `openEphemeralSession()` handles SSH key upload, VPS creation, IP polling, and cleanup via `await using`:
 
 ```ts
 import { openEphemeralSession, HetznerProvider } from 'capstan'
@@ -105,25 +152,20 @@ await using session = await openEphemeralSession(provider, {
   name: `bench-${Date.now()}`,
   size: 'cx43',
   region: 'fsn1',
-  publicKey: myPublicKey,        // you generate the keypair locally
-  userData: '#cloud-config\n...', // optional cloud-init
+  publicKey: myPublicKey,
+  userData: '#cloud-config\n...',
 })
 
-const ip = await session.publicIP()   // polls if necessary
+const ip = await session.publicIP()
 // ... ssh root@ip, run your work ...
-
-// On scope exit: VPS is destroyed, SSH key is deleted.
-// On createVPS failure: SSH key is rolled back automatically.
-// Both cleanup steps are best-effort and never throw.
+// On scope exit: VPS destroyed, SSH key deleted.
 ```
 
-If your codebase can't use `await using` (older targets, REPL), call `await session.dispose()` from a `finally` block.
-
-Requires Node 22+ and TypeScript 5.2+ — same as capstan core.
+Requires Node 22+ and TypeScript 5.2+.
 
 ## Placement posture (v0.3+)
 
-Capstan abstracts provider APIs but doesn't, on its own, say WHERE a given workload should go. `recommendPlacement()` answers that question — given a customer geography + workload class + SLA tier, it returns an ordered (provider, region, size) recommendation plus any operational caveats the caller should surface.
+Given a customer geography + workload class + SLA tier, returns an ordered (provider, region, size) recommendation:
 
 ```ts
 import { recommendPlacement } from 'capstan'
@@ -133,37 +175,24 @@ const r = recommendPlacement({
   workload: 'cpu-latency',
   sla: 'standard',
 })
-// r.primary    = { provider: 'linode', region: 'ap-northeast',
-//                  size: 'g7-premium-4' }
-// r.fallbacks  = [Linode jp-tyo-3, Linode jp-osa]
-// r.caveats    = ['Linode g7-premium has elevated SSH-provisioning ...']
+// r.primary   = { provider: 'linode', region: 'ap-northeast', size: 'g7-premium-4' }
+// r.fallbacks = [jp-tyo-3, jp-osa]
+// r.caveats   = ['Linode g7-premium has elevated SSH-provisioning ...']
 ```
 
-The module is pure catalog + decision logic — it does not call any provider API. Use the `fallbacks` array as the retry ladder when `createVPS()` returns a retryable error.
-
-14 geographies (`eu-central`, `eu-north`, `eu-west`, `eu-south`, `us-east`, `us-central`, `us-west`, `canada`, `singapore`, `japan`, `india`, `indonesia`, `australia`, `latam`) × 4 workload classes (`io-multitenant`, `cpu-latency`, `cpu-throughput`, `general`) × 3 SLA tiers (`best-effort`, `standard`, `premium`) = 168 placement decisions encoded.
-
-Data tables snapshot: 2026-05-22. Re-verify quarterly — provider pricing, region availability, and tier characteristics drift.
-
-Subpath import: `import { recommendPlacement } from 'capstan/posture'`.
-
-## Why "capstan"?
-
-A capstan is the rotating drum on a ship used to hoist heavy things — anchors, sails, cables. This library hoists servers up and down. The metaphor lands.
+14 geographies × 4 workloads × 3 SLA tiers = 168 encoded placement decisions. Data tables live in `specs/posture.json`. Same function available in Go via `capstan.RecommendPlacement()`.
 
 ## Roadmap
 
-- `0.1.x` — provider abstraction (foundation)
-- `0.2.x` — ephemeral session helper: `openEphemeralSession()` + `await using` cleanup
-- `0.3.x` — **placement posture** (this release): `recommendPlacement()` over a static catalog of regions, tiers, and operational caveats
-- `0.4.x` — cloud-init profile registry (generic Go/Node/Python boxes vs runtime-specific YAMLs)
-- `0.5.x` — optional bootstrap-stage orchestrator (auth → ssh-key → provision → wait-ssh → cloud-init), lifted from groundflare
-- Provider additions opportunistic — Scaleway, OVH, Backblaze Compute, Fly Machines, etc.
+- `0.1` — provider abstraction
+- `0.2` — ephemeral session helper
+- `0.3` — placement posture + shared JSON specs + Go module (current)
+- `0.4` — Go HTTP client (create/destroy/get VPS via provider APIs)
+
+## Why "capstan"?
+
+A capstan is the rotating drum on a ship used to hoist heavy things — anchors, sails, cables. This library hoists servers up and down.
 
 ## License
 
 MIT. See LICENSE.
-
-## Credit
-
-Extracted from [groundflare](https://github.com/solcreek/groundflare). The provider abstraction was built there, then split out to be useful beyond the "deploy a Cloudflare Worker on a VPS" use case.
