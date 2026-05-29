@@ -1,9 +1,13 @@
 # Changelog
 
-## v0.5.0 — Server List + power actions (Go)
+## v0.5.0 — Server List + power actions, factory, bench + spec-check tools, Hetzner spec sync (Go)
 
-Extends the Go `Provider` interface with the operations Marina-via-dew
-and other downstream consumers need to drive existing servers:
+The v0.5 cycle is Go-only. The TypeScript `Provider` interface stays at
+the v0.4 surface — TS catches up when a TS consumer needs the new
+operations; speculative parity is explicitly out of scope. JSON specs
+in `specs/` remain the cross-language source of truth.
+
+### Provider interface — read + power lifecycle
 
 ```go
 type Provider interface {
@@ -16,47 +20,121 @@ type Provider interface {
 }
 ```
 
-`List` auto-paginates by default; `ListOpts.MaxServers` caps the result
-set (default 200) and `ListOpts.Label` filters by provider-specific
-tag selector. Power actions return an `Action` immediately, with the
-underlying async work tracked by an action ID. `WaitForAction` polls
-`/actions/{id}` on a 500ms tick until the action reaches a terminal
-status; the caller controls the deadline via `ctx`.
+`List` auto-paginates by default (`ListOpts.MaxServers` caps the
+result, default 200; `ListOpts.Label` filters by provider tag).
+Power actions return an `Action` immediately with the underlying
+async work tracked by ID; `WaitForAction` polls `/actions/{id}` on a
+500ms tick until terminal status, deadline via `ctx`.
 
-### Reference implementation: Hetzner
+**Hetzner** is the reference implementation. DigitalOcean / Linode /
+Vultr expose the same five methods but return `capstan.ErrNotImplemented`
+for now; the interface is unified so consumers write provider-agnostic
+code today and surface "not yet supported" at the edge.
 
-Hetzner is the reference. The new endpoints used:
+### Provider construction — `New(name, token)` factory
 
-- `GET /servers?per_page=...&page=...&label_selector=...`
-- `POST /servers/{id}/actions/poweron`
-- `POST /servers/{id}/actions/poweroff`
-- `POST /servers/{id}/actions/reboot` (used by `Restart`; graceful ACPI shutdown, not the hard "reset")
-- `GET /actions/{id}` (used by `WaitForAction`)
+Mirrors the TypeScript `createProvider` helper:
 
-### Stub status on other providers
+```go
+p, err := capstan.New(capstan.Hetzner, token)
+// instead of: p := capstan.NewHetzner(token), with a switch per name
+```
 
-DigitalOcean, Linode, and Vultr expose the same five methods but return
-`capstan.ErrNotImplemented` for now. The interface is unified so
-consumers can write provider-agnostic code today and surface "not yet
-supported" at the edge; per-provider implementations land on a
-follow-up schedule driven by real consumer demand.
+### HTTP plumbing — single shared `httpClient`
 
-### TypeScript parity
+Each provider previously carried its own `(get, post, del)` trio
+that was 95% identical. Collapsed into `http_client.go` (~80 lines).
+Behavior is unchanged byte-for-byte; the four provider files
+shrink by 178 lines net.
 
-This release is Go-only. The TypeScript `Provider` interface stays at
-the v0.4 surface (Regions / Plans / Create / Get / Destroy). TS catches
-up when a TS consumer (groundflare or new) needs `List` / power
-actions; doing it now without a forcing function would be speculative
-parity work. JSON specs in `specs/` are unchanged — both languages
-still share the single source of truth for status maps and pricing.
+### New tool: `cmd/capstan-bench`
+
+Measures provider API latency for the operations downstream consumers
+(dew, Marina-via-dew) call on every refresh, so architecture
+decisions are data-driven rather than asserted. Suite covers:
+
+- Reads: `Regions`, `Plans`, `List`, `Get`, parallel-`Get` fanout
+  at configurable concurrency levels
+- Mutations (`--include-mutations`): `Create` ack + visible-in-list +
+  status-running, `PowerOff/PowerOn/Restart` ack + WaitForAction,
+  `Destroy` ack. Costs ~one server-hour; the harness always destroys
+  in a deferred cleanup
+- Outputs Markdown summary table to stdout and optional per-call
+  NDJSON to `--raw` for post-hoc analysis
+- Auto-fallback ladder on placement / deprecated failures (Hetzner
+  cax11 placement-unavailable at FRA is common; default changed
+  cax11 → cx23)
+
+Token resolution accepts every common alias per provider:
+
+```
+Hetzner       HCLOUD_TOKEN | HETZNER_API_TOKEN | HETZNER_TOKEN
+DigitalOcean  DIGITALOCEAN_TOKEN | DIGITALOCEAN_ACCESS_TOKEN |
+              DOCTL_ACCESS_TOKEN | DO_API_KEY | DO_TOKEN
+Linode        LINODE_TOKEN | LINODE_CLI_TOKEN
+Vultr         VULTR_API_KEY | VULTR_TOKEN
+```
+
+### New tool: `cmd/capstan-spec-check`
+
+Compares the embedded `specs/<provider>.json` priceCents map against
+the live catalog API and reports drift:
+
+- entries in spec but no longer returned by the API (likely deprecated)
+- entries in the live API but missing from spec (new types to add)
+
+Linode and Vultr catalog endpoints are public — spec-check runs
+against them with no token. Hetzner and DigitalOcean require auth.
+Exit 0 in sync, 1 on drift, 2 on error.
+
+First sweep against all four specs (2026-05-29) surfaced significant
+drift:
+
+```
+Hetzner      19 in sync, 4 deprecated, 6 new   (fixed in this release)
+DigitalOcean 10 in sync, 0 deprecated, 162 new (verified with token)
+Linode       12 in sync, 0 deprecated, 63 new  (public, no token)
+Vultr         9 in sync, 1 deprecated, 142 new (public, no token)
+```
+
+### `specs/hetzner.json` brought back in sync
+
+- Removed: `cx22`, `cx32`, `cx42`, `cx52` (Hetzner reports `server type
+  N is deprecated` on Create)
+- Added: `cpx12` (Singapore only, €9.49), `cpx22`, `cpx32`, `cpx42`,
+  `cpx52`, `cpx62` (cpx V2 generation, AMD EPYC, fsn1 pricing)
+- Price corrections — `ccx` dedicated tier has had significant
+  increases since the previous spec snapshot:
+
+  ```
+  ccx13  1449 → 1849   (+27%)
+  ccx23  2599 → 3699   (+42%)
+  ccx33  4849 → 7399   (+53%)
+  ccx43  9199 → 14749  (+60%)
+  ccx53 17399 → 29499  (+70%)
+  ccx63 33599 → 44199  (+32%)
+  ```
+
+After this fix, `capstan-spec-check --provider hetzner` exits 0
+against the live API (25 types in sync).
+
+### CI: weekly `spec-drift` workflow
+
+`.github/workflows/spec-drift.yml` runs `capstan-spec-check` against
+each provider on a Monday cron, on push to main affecting `specs/` or
+the tool, on PRs, and on manual dispatch. Linode and Vultr always run
+(public catalog); Hetzner and DigitalOcean run when the corresponding
+secret is set (`HCLOUD_TOKEN`, `DO_API_KEY` — repo or org level).
+Schedule runs are informational (warning, never red-badges); PR/push
+runs hard-fail on drift to catch broken specs before merge.
 
 ### Tests
 
-8 new Hetzner tests (`hetzner_test.go`): single-page list, auto-
-paginate across two pages, `MaxServers` cap, each of `PowerOn` /
-`PowerOff` / `Restart`, `WaitForAction` success after three polls,
-`WaitForAction` terminal-error path with `error.code` propagation.
-Full Go test suite: green.
+Go test count grew from 13 to ~50: 8 new Hetzner tests for the new
+methods, 3 factory tests, 5 stats tests, 7 bench tests (token
+resolution, alias fallback, fallback ladder coverage, retryable-error
+classification), 5 spec-check tests (in-sync / deprecated-in-spec /
+new-in-API / both-sides / token alias). All green.
 
 ## v0.3.0 — `recommendPlacement` posture module
 

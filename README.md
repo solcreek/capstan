@@ -93,7 +93,7 @@ One typed `Provider` interface with four working backends. Every implementation:
 | **Linode** | ✓ | ✓ | ✓ | ✓ | ✓ | 22 |
 | **Vultr** | ✓ | ✓ | ✓ | ✓ | ✓ | 27 |
 
-327 tests total (314 TypeScript + 13 Go). No network calls in tests — providers accept a `fetchImpl` injection (TS) and specs are embedded (Go).
+~360 tests total (314 TypeScript + ~50 Go). No network calls in tests — providers accept a `fetchImpl` injection (TS) and specs are embedded (Go).
 
 ## Provider interface (TypeScript)
 
@@ -122,22 +122,48 @@ interface Provider {
 
 See [`src/types.ts`](./src/types.ts) for all value types.
 
-## Go types
+## Go interface (v0.5+)
 
 ```go
-type ProviderSpec struct {
-    Name, DisplayName, BaseURL, DefaultImage, UserDataEncoding string
-    StatusMap   map[string]string
-    PriceCents  map[string]int
+type Provider interface {
+    Name() ProviderName
+    Regions(ctx) ([]Region, error)
+    Plans(ctx, region) ([]Plan, error)
+
+    List(ctx, ListOpts) ([]Server, error)
+    Get(ctx, id) (*Server, error)
+
+    Create(ctx, CreateOpts) (*Server, error)
+    Destroy(ctx, id) error
+
+    PowerOn(ctx, id) (*Action, error)
+    PowerOff(ctx, id) (*Action, error)
+    Restart(ctx, id) (*Action, error)
+    WaitForAction(ctx, actionID) (*Action, error)
+
+    EstimateMonthlyCost(plan) int
 }
 
+func New(name ProviderName, token string) (Provider, error)
 func Spec(name ProviderName) *ProviderSpec
-func (s *ProviderSpec) MapStatus(raw string) ServerStatus
-func (s *ProviderSpec) EstimateMonthlyCost(plan string) int
-func (s *ProviderSpec) ResolveImage(image string) string
-
 func RecommendPlacement(geography, workload, sla) (*Recommendation, error)
 ```
+
+Hetzner is the reference for the v0.5 methods; DigitalOcean / Linode /
+Vultr return `ErrNotImplemented` for `List` / `PowerOn/Off/Restart` /
+`WaitForAction` until a real consumer drives that work.
+
+## Tools (in this repo)
+
+| Tool | Purpose |
+|---|---|
+| `cmd/capstan-bench` | Measure provider API latency end-to-end (reads, fanout, full mutation lifecycle). Used to settle architecture choices with data |
+| `cmd/capstan-spec-check` | Compare embedded `specs/<provider>.json` against the live provider catalog; report drift |
+
+`spec-drift` runs weekly via GitHub Actions. Linode and Vultr catalog
+endpoints are public so those checks need no secrets; Hetzner and
+DigitalOcean run when `HCLOUD_TOKEN` / `DO_API_KEY` is configured at
+repo or org level. Read-only tokens are sufficient.
 
 ## Ephemeral sessions (TypeScript, v0.2+)
 
@@ -186,8 +212,12 @@ const r = recommendPlacement({
 
 - `0.1` — provider abstraction
 - `0.2` — ephemeral session helper
-- `0.3` — placement posture + shared JSON specs + Go module (current)
+- `0.3` — placement posture + shared JSON specs + Go module
 - `0.4` — Go HTTP client (create/destroy/get VPS via provider APIs)
+- `0.5` — Go `Provider` extended with `List` + power actions;
+  `New(name, token)` factory; shared `httpClient`; `cmd/capstan-bench`
+  + `cmd/capstan-spec-check`; weekly drift CI; Hetzner spec re-synced
+  to current Cloud API (current)
 
 ## Why "capstan"?
 
