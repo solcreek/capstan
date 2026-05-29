@@ -45,9 +45,10 @@ func main() {
 		iterations   = flag.Int("iterations", 30, "iterations per read operation")
 		concurrency  = flag.String("concurrency", "1,5,10", "comma-separated concurrency levels for Get fanout")
 		includeMut   = flag.Bool("include-mutations", false, "also bench Create/Power/Destroy (costs ~1 server-hour)")
-		serverType   = flag.String("server-type", "cax11", "server type/plan for mutation test (defaults to cheapest Hetzner ARM)")
+		serverType   = flag.String("server-type", "cx23", "server type/plan for mutation test (cx23 = cheapest reliably-available Hetzner Intel)")
 		region       = flag.String("region", "fsn1", "region for mutation test (defaults to Hetzner Falkenstein)")
 		rawPath      = flag.String("raw", "", "if set, write per-call NDJSON to this file")
+		autoFallback = flag.Bool("auto-fallback", true, "on placement/deprecated Create failure, retry with the next entry in fallbackServerTypes for this provider")
 		timeoutSec   = flag.Int("timeout", 600, "overall bench timeout in seconds")
 	)
 	flag.Parse()
@@ -93,7 +94,7 @@ func main() {
 	benchFanout(ctx, p, concLevels, *iterations, rec)
 
 	if *includeMut {
-		benchMutations(ctx, p, *serverType, *region, rec)
+		benchMutations(ctx, p, *serverType, *region, *autoFallback, rec)
 	}
 
 	rec.printMarkdown(os.Stdout, pName)
@@ -312,20 +313,72 @@ func benchFanout(ctx context.Context, p capstan.Provider, levels []int, iters in
 
 // --- Mutation suite (--include-mutations) ---
 
-func benchMutations(ctx context.Context, p capstan.Provider, plan, region string, rec *recorder) {
+// fallbackServerTypes — when --auto-fallback is set and the user's chosen
+// type fails with a placement/deprecation error, walk this ladder per
+// provider. Picked to span different CPU families (Intel / ARM / AMD)
+// so capacity pressure on one pool doesn't block all attempts.
+var fallbackServerTypes = map[capstan.ProviderName][]string{
+	capstan.Hetzner:      {"cx23", "cax11", "cpx11", "cx33"},
+	capstan.DigitalOcean: {"s-1vcpu-1gb", "s-1vcpu-2gb"},
+	capstan.Linode:       {"g6-nanode-1", "g6-standard-1"},
+	capstan.Vultr:        {"vc2-1c-1gb", "vc2-1c-2gb"},
+}
+
+// isRetryableCreateError matches the kind of failures that justify
+// trying a different server type: placement capacity (412) and
+// deprecated/invalid type (422 with "deprecated"). Errors that won't
+// fix themselves with a different type (auth, network, malformed
+// request) are NOT retried.
+func isRetryableCreateError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "resource_unavailable") ||
+		strings.Contains(msg, "error during placement") ||
+		strings.Contains(msg, "deprecated") ||
+		strings.Contains(msg, "unavailable")
+}
+
+func createWithFallback(ctx context.Context, p capstan.Provider, name, plan, region string, autoFallback bool) (*capstan.Server, string, error) {
+	server, err := p.Create(ctx, capstan.CreateOpts{Name: name, Plan: plan, Region: region})
+	if err == nil {
+		return server, plan, nil
+	}
+	if !autoFallback || !isRetryableCreateError(err) {
+		return nil, plan, err
+	}
+
+	candidates := fallbackServerTypes[p.Name()]
+	for _, fb := range candidates {
+		if fb == plan {
+			continue
+		}
+		fmt.Fprintf(os.Stderr, "capstan-bench: %s failed (%v), trying %s\n", plan, err, fb)
+		server, err = p.Create(ctx, capstan.CreateOpts{Name: name, Plan: fb, Region: region})
+		if err == nil {
+			return server, fb, nil
+		}
+		if !isRetryableCreateError(err) {
+			return nil, fb, err
+		}
+	}
+	return nil, plan, fmt.Errorf("all fallback server types exhausted: %w", err)
+}
+
+func benchMutations(ctx context.Context, p capstan.Provider, plan, region string, autoFallback bool, rec *recorder) {
 	name := fmt.Sprintf("capstan-bench-%d", time.Now().Unix())
 	fmt.Fprintf(os.Stderr, "capstan-bench: creating mutation-test server %q (%s @ %s)\n", name, plan, region)
 
 	t0 := time.Now()
-	server, err := p.Create(ctx, capstan.CreateOpts{
-		Name:   name,
-		Plan:   plan,
-		Region: region,
-	})
+	server, actualPlan, err := createWithFallback(ctx, p, name, plan, region, autoFallback)
 	rec.record("Create_ack", 0, time.Since(t0), err)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "capstan-bench: Create failed: %v\n", err)
 		return
+	}
+	if actualPlan != plan {
+		fmt.Fprintf(os.Stderr, "capstan-bench: used fallback plan %s (requested %s)\n", actualPlan, plan)
 	}
 
 	// Always destroy at the end, even on subsequent failure.

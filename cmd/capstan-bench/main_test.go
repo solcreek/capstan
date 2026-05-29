@@ -1,11 +1,43 @@
 package main
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
 	"github.com/solcreek/capstan"
 )
+
+func TestIsRetryableCreateError(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"nil", nil, false},
+		{"placement 412", errors.New("capstan: hetzner POST /servers: 412 {\"error\":{\"code\":\"resource_unavailable\",\"message\":\"error during placement\"}}"), true},
+		{"deprecated 422", errors.New("capstan: hetzner POST /servers: 422 {\"error\":{\"code\":\"invalid_input\",\"message\":\"server type 104 is deprecated\"}}"), true},
+		{"auth 401", errors.New("capstan: hetzner POST /servers: 401 {\"error\":\"unauthorized\"}"), false},
+		{"bad request 400", errors.New("capstan: hetzner POST /servers: 400 invalid name"), false},
+		{"network", errors.New("capstan: hetzner POST /servers: dial tcp: lookup failed"), false},
+	}
+	for _, tc := range cases {
+		if got := isRetryableCreateError(tc.err); got != tc.want {
+			t.Errorf("%s: isRetryableCreateError(%v) = %v, want %v", tc.name, tc.err, got, tc.want)
+		}
+	}
+}
+
+func TestFallbackServerTypesCoverAllProviders(t *testing.T) {
+	// Every provider should have at least one fallback so --auto-fallback is
+	// useful uniformly. If we add a new provider and forget the ladder, this
+	// fails loud.
+	for _, name := range capstan.AllProviders() {
+		if list, ok := fallbackServerTypes[name]; !ok || len(list) == 0 {
+			t.Errorf("provider %q has no fallback server types defined", name)
+		}
+	}
+}
 
 // clearAllAliases sets every known token env var to "" for the test scope.
 // t.Setenv guarantees they're restored at test end.
