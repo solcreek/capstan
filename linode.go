@@ -119,6 +119,30 @@ func (l *LinodeProvider) EstimateMonthlyCost(plan string) int {
 	return l.spec.EstimateMonthlyCost(plan)
 }
 
+// List, PowerOn/Off/Restart, WaitForAction will be implemented for
+// Linode as a follow-up. Hetzner is the reference implementation; the
+// interface is stable and additive once it lands.
+
+func (l *LinodeProvider) List(ctx context.Context, opts ListOpts) ([]Server, error) {
+	return nil, ErrNotImplemented
+}
+
+func (l *LinodeProvider) PowerOn(ctx context.Context, id string) (*Action, error) {
+	return nil, ErrNotImplemented
+}
+
+func (l *LinodeProvider) PowerOff(ctx context.Context, id string) (*Action, error) {
+	return nil, ErrNotImplemented
+}
+
+func (l *LinodeProvider) Restart(ctx context.Context, id string) (*Action, error) {
+	return nil, ErrNotImplemented
+}
+
+func (l *LinodeProvider) WaitForAction(ctx context.Context, actionID string) (*Action, error) {
+	return nil, ErrNotImplemented
+}
+
 type linodeInstance struct {
 	ID     int      `json:"id"`
 	Label  string   `json:"label"`

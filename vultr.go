@@ -120,6 +120,30 @@ func (v *VultrProvider) EstimateMonthlyCost(plan string) int {
 	return v.spec.EstimateMonthlyCost(plan)
 }
 
+// List, PowerOn/Off/Restart, WaitForAction will be implemented for
+// Vultr as a follow-up. Hetzner is the reference implementation; the
+// interface is stable and additive once it lands.
+
+func (v *VultrProvider) List(ctx context.Context, opts ListOpts) ([]Server, error) {
+	return nil, ErrNotImplemented
+}
+
+func (v *VultrProvider) PowerOn(ctx context.Context, id string) (*Action, error) {
+	return nil, ErrNotImplemented
+}
+
+func (v *VultrProvider) PowerOff(ctx context.Context, id string) (*Action, error) {
+	return nil, ErrNotImplemented
+}
+
+func (v *VultrProvider) Restart(ctx context.Context, id string) (*Action, error) {
+	return nil, ErrNotImplemented
+}
+
+func (v *VultrProvider) WaitForAction(ctx context.Context, actionID string) (*Action, error) {
+	return nil, ErrNotImplemented
+}
+
 type vultrInstance struct {
 	ID          string `json:"id"`
 	Label       string `json:"label"`

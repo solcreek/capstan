@@ -130,6 +130,30 @@ func (d *DigitalOceanProvider) EstimateMonthlyCost(plan string) int {
 	return d.spec.EstimateMonthlyCost(plan)
 }
 
+// List, PowerOn/Off/Restart, WaitForAction will be implemented for
+// DigitalOcean as a follow-up. Hetzner is the reference implementation; the
+// interface is stable and additive once it lands.
+
+func (d *DigitalOceanProvider) List(ctx context.Context, opts ListOpts) ([]Server, error) {
+	return nil, ErrNotImplemented
+}
+
+func (d *DigitalOceanProvider) PowerOn(ctx context.Context, id string) (*Action, error) {
+	return nil, ErrNotImplemented
+}
+
+func (d *DigitalOceanProvider) PowerOff(ctx context.Context, id string) (*Action, error) {
+	return nil, ErrNotImplemented
+}
+
+func (d *DigitalOceanProvider) Restart(ctx context.Context, id string) (*Action, error) {
+	return nil, ErrNotImplemented
+}
+
+func (d *DigitalOceanProvider) WaitForAction(ctx context.Context, actionID string) (*Action, error) {
+	return nil, ErrNotImplemented
+}
+
 type doDroplet struct {
 	ID     int    `json:"id"`
 	Name   string `json:"name"`

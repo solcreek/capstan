@@ -8,8 +8,15 @@ package capstan
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 )
+
+// ErrNotImplemented is returned by provider methods that are not yet wired up
+// for that provider. The interface is unified across providers so consumers
+// (dew, Marina-via-dew, bench tools) can write provider-agnostic code; some
+// methods land on a per-provider schedule and stub out until then.
+var ErrNotImplemented = errors.New("capstan: not implemented for this provider")
 
 type ProviderName string
 
@@ -24,10 +31,57 @@ type Provider interface {
 	Name() ProviderName
 	Regions(ctx context.Context) ([]Region, error)
 	Plans(ctx context.Context, region string) ([]Plan, error)
-	Create(ctx context.Context, opts CreateOpts) (*Server, error)
+
+	// Servers — read.
+	List(ctx context.Context, opts ListOpts) ([]Server, error)
 	Get(ctx context.Context, id string) (*Server, error)
+
+	// Servers — lifecycle.
+	Create(ctx context.Context, opts CreateOpts) (*Server, error)
 	Destroy(ctx context.Context, id string) error
+
+	// Servers — power actions. Return an Action immediately; the action
+	// itself completes asynchronously. Use WaitForAction to block until
+	// terminal status, or fire-and-forget for snappier UI feedback.
+	PowerOn(ctx context.Context, id string) (*Action, error)
+	PowerOff(ctx context.Context, id string) (*Action, error)
+	Restart(ctx context.Context, id string) (*Action, error)
+
+	// WaitForAction polls until the action reaches a terminal status
+	// (success or error). Caller decides the polling cadence via ctx.
+	WaitForAction(ctx context.Context, actionID string) (*Action, error)
+
 	EstimateMonthlyCost(plan string) int
+}
+
+// ListOpts controls pagination and filtering for Provider.List.
+//
+// Page == 0 means "auto-paginate up to MaxServers servers" (default 200).
+// PerPage is provider-dependent; capstan picks a sensible default if unset.
+type ListOpts struct {
+	Page       int
+	PerPage    int
+	MaxServers int
+	Label      string // optional provider-specific tag filter, "" = none
+}
+
+type ActionStatus string
+
+const (
+	ActionRunning ActionStatus = "running"
+	ActionSuccess ActionStatus = "success"
+	ActionError   ActionStatus = "error"
+)
+
+type Action struct {
+	ID        string       `json:"id"`
+	Command   string       `json:"command"`             // e.g. "start_server", "stop_server", "reboot"
+	Status    ActionStatus `json:"status"`
+	Progress  int          `json:"progress"`            // 0-100; not all providers populate this
+	Started   string       `json:"started,omitempty"`
+	Finished  string       `json:"finished,omitempty"`
+	ErrorCode string       `json:"errorCode,omitempty"`
+	ErrorMsg  string       `json:"errorMessage,omitempty"`
 }
 
 type Region struct {

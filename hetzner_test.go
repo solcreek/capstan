@@ -212,6 +212,263 @@ func TestHetznerDefaultImage(t *testing.T) {
 	}
 }
 
+func TestHetznerList(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/servers" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+		json.NewEncoder(w).Encode(map[string]any{
+			"servers": []map[string]any{
+				{"id": 1, "name": "web-1", "status": "running", "created": "2026-05-28T10:00:00+00:00"},
+				{"id": 2, "name": "db-1", "status": "off", "created": "2026-05-28T11:00:00+00:00"},
+			},
+			"meta": map[string]any{
+				"pagination": map[string]any{
+					"page": 1, "per_page": 50, "next_page": nil, "last_page": 1, "total_entries": 2,
+				},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	h := NewHetzner("test-token")
+	h.spec = &ProviderSpec{
+		BaseURL:   srv.URL,
+		StatusMap: map[string]string{"running": "running", "off": "stopped"},
+	}
+
+	servers, err := h.List(context.Background(), ListOpts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(servers) != 2 {
+		t.Fatalf("got %d servers", len(servers))
+	}
+	if servers[0].Name != "web-1" || servers[0].Status != StatusRunning {
+		t.Errorf("server[0] = %+v", servers[0])
+	}
+	if servers[1].Status != StatusStopped {
+		t.Errorf("server[1].Status = %q", servers[1].Status)
+	}
+}
+
+func TestHetznerListAutoPaginate(t *testing.T) {
+	page := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		page++
+		if page == 1 {
+			next := 2
+			json.NewEncoder(w).Encode(map[string]any{
+				"servers": []map[string]any{
+					{"id": 1, "name": "a", "status": "running", "created": ""},
+					{"id": 2, "name": "b", "status": "running", "created": ""},
+				},
+				"meta": map[string]any{
+					"pagination": map[string]any{"page": 1, "next_page": next, "last_page": 2, "total_entries": 3},
+				},
+			})
+		} else {
+			json.NewEncoder(w).Encode(map[string]any{
+				"servers": []map[string]any{
+					{"id": 3, "name": "c", "status": "running", "created": ""},
+				},
+				"meta": map[string]any{
+					"pagination": map[string]any{"page": 2, "next_page": nil, "last_page": 2, "total_entries": 3},
+				},
+			})
+		}
+	}))
+	defer srv.Close()
+
+	h := NewHetzner("test-token")
+	h.spec = &ProviderSpec{BaseURL: srv.URL, StatusMap: map[string]string{"running": "running"}}
+
+	servers, err := h.List(context.Background(), ListOpts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(servers) != 3 {
+		t.Fatalf("auto-paginate got %d servers, want 3", len(servers))
+	}
+	if page != 2 {
+		t.Errorf("expected 2 page requests, got %d", page)
+	}
+}
+
+func TestHetznerListMaxServersCap(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{
+			"servers": []map[string]any{
+				{"id": 1, "name": "a", "status": "running", "created": ""},
+				{"id": 2, "name": "b", "status": "running", "created": ""},
+				{"id": 3, "name": "c", "status": "running", "created": ""},
+			},
+			"meta": map[string]any{
+				"pagination": map[string]any{"page": 1, "next_page": nil, "last_page": 1, "total_entries": 3},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	h := NewHetzner("test-token")
+	h.spec = &ProviderSpec{BaseURL: srv.URL, StatusMap: map[string]string{"running": "running"}}
+
+	servers, err := h.List(context.Background(), ListOpts{MaxServers: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(servers) != 2 {
+		t.Fatalf("MaxServers=2 got %d servers", len(servers))
+	}
+}
+
+func TestHetznerPowerOn(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "POST" || r.URL.Path != "/servers/42/actions/poweron" {
+			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+		json.NewEncoder(w).Encode(map[string]any{
+			"action": map[string]any{
+				"id":       7,
+				"command":  "start_server",
+				"status":   "running",
+				"progress": 0,
+				"started":  "2026-05-29T10:00:00+00:00",
+			},
+		})
+	}))
+	defer srv.Close()
+
+	h := NewHetzner("test-token")
+	h.spec = &ProviderSpec{BaseURL: srv.URL}
+
+	a, err := h.PowerOn(context.Background(), "42")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.ID != "7" {
+		t.Errorf("Action.ID = %q", a.ID)
+	}
+	if a.Command != "start_server" {
+		t.Errorf("Action.Command = %q", a.Command)
+	}
+	if a.Status != ActionRunning {
+		t.Errorf("Action.Status = %q", a.Status)
+	}
+}
+
+func TestHetznerPowerOff(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/servers/42/actions/poweroff" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+		json.NewEncoder(w).Encode(map[string]any{
+			"action": map[string]any{
+				"id":      8,
+				"command": "stop_server",
+				"status":  "running",
+			},
+		})
+	}))
+	defer srv.Close()
+
+	h := NewHetzner("test-token")
+	h.spec = &ProviderSpec{BaseURL: srv.URL}
+
+	if _, err := h.PowerOff(context.Background(), "42"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestHetznerRestart(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/servers/42/actions/reboot" {
+			t.Errorf("expected reboot, got %s", r.URL.Path)
+		}
+		json.NewEncoder(w).Encode(map[string]any{
+			"action": map[string]any{
+				"id": 9, "command": "reboot_server", "status": "running",
+			},
+		})
+	}))
+	defer srv.Close()
+
+	h := NewHetzner("test-token")
+	h.spec = &ProviderSpec{BaseURL: srv.URL}
+
+	if _, err := h.Restart(context.Background(), "42"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestHetznerWaitForActionSuccess(t *testing.T) {
+	polls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/actions/7" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+		polls++
+		// First two polls report running, then success.
+		if polls < 3 {
+			json.NewEncoder(w).Encode(map[string]any{
+				"action": map[string]any{
+					"id": 7, "command": "start_server", "status": "running", "progress": polls * 33,
+				},
+			})
+		} else {
+			json.NewEncoder(w).Encode(map[string]any{
+				"action": map[string]any{
+					"id": 7, "command": "start_server", "status": "success",
+					"progress": 100, "finished": "2026-05-29T10:00:02+00:00",
+				},
+			})
+		}
+	}))
+	defer srv.Close()
+
+	h := NewHetzner("test-token")
+	h.spec = &ProviderSpec{BaseURL: srv.URL}
+
+	a, err := h.WaitForAction(context.Background(), "7")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.Status != ActionSuccess {
+		t.Errorf("Status = %q", a.Status)
+	}
+	if polls < 3 {
+		t.Errorf("expected ≥3 polls, got %d", polls)
+	}
+}
+
+func TestHetznerWaitForActionError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{
+			"action": map[string]any{
+				"id": 7, "command": "start_server", "status": "error",
+				"error": map[string]any{
+					"code": "server_locked", "message": "server is locked",
+				},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	h := NewHetzner("test-token")
+	h.spec = &ProviderSpec{BaseURL: srv.URL}
+
+	a, err := h.WaitForAction(context.Background(), "7")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.Status != ActionError {
+		t.Errorf("Status = %q", a.Status)
+	}
+	if a.ErrorCode != "server_locked" {
+		t.Errorf("ErrorCode = %q", a.ErrorCode)
+	}
+}
+
 func TestHetznerUserDataOmittedWhenEmpty(t *testing.T) {
 	var body map[string]any
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
