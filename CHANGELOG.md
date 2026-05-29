@@ -1,5 +1,63 @@
 # Changelog
 
+## v0.5.0 — Server List + power actions (Go)
+
+Extends the Go `Provider` interface with the operations Marina-via-dew
+and other downstream consumers need to drive existing servers:
+
+```go
+type Provider interface {
+    // existing: Name, Regions, Plans, Create, Get, Destroy, EstimateMonthlyCost
+    List(ctx, ListOpts) ([]Server, error)
+    PowerOn(ctx, id) (*Action, error)
+    PowerOff(ctx, id) (*Action, error)
+    Restart(ctx, id) (*Action, error)
+    WaitForAction(ctx, actionID) (*Action, error)
+}
+```
+
+`List` auto-paginates by default; `ListOpts.MaxServers` caps the result
+set (default 200) and `ListOpts.Label` filters by provider-specific
+tag selector. Power actions return an `Action` immediately, with the
+underlying async work tracked by an action ID. `WaitForAction` polls
+`/actions/{id}` on a 500ms tick until the action reaches a terminal
+status; the caller controls the deadline via `ctx`.
+
+### Reference implementation: Hetzner
+
+Hetzner is the reference. The new endpoints used:
+
+- `GET /servers?per_page=...&page=...&label_selector=...`
+- `POST /servers/{id}/actions/poweron`
+- `POST /servers/{id}/actions/poweroff`
+- `POST /servers/{id}/actions/reboot` (used by `Restart`; graceful ACPI shutdown, not the hard "reset")
+- `GET /actions/{id}` (used by `WaitForAction`)
+
+### Stub status on other providers
+
+DigitalOcean, Linode, and Vultr expose the same five methods but return
+`capstan.ErrNotImplemented` for now. The interface is unified so
+consumers can write provider-agnostic code today and surface "not yet
+supported" at the edge; per-provider implementations land on a
+follow-up schedule driven by real consumer demand.
+
+### TypeScript parity
+
+This release is Go-only. The TypeScript `Provider` interface stays at
+the v0.4 surface (Regions / Plans / Create / Get / Destroy). TS catches
+up when a TS consumer (groundflare or new) needs `List` / power
+actions; doing it now without a forcing function would be speculative
+parity work. JSON specs in `specs/` are unchanged — both languages
+still share the single source of truth for status maps and pricing.
+
+### Tests
+
+8 new Hetzner tests (`hetzner_test.go`): single-page list, auto-
+paginate across two pages, `MaxServers` cap, each of `PowerOn` /
+`PowerOff` / `Restart`, `WaitForAction` success after three polls,
+`WaitForAction` terminal-error path with `error.code` propagation.
+Full Go test suite: green.
+
 ## v0.3.0 — `recommendPlacement` posture module
 
 Adds a new `posture` module — a pure-function placement recommender that
