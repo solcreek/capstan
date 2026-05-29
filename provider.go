@@ -172,3 +172,22 @@ func (s *ProviderSpec) ResolveImage(image string) string {
 func AllProviders() []ProviderName {
 	return []ProviderName{Hetzner, DigitalOcean, Linode, Vultr}
 }
+
+// New constructs a Provider by name. Returns an error when the name is not
+// one of the supported providers. Mirrors the TypeScript registry's
+// createProvider helper so downstream consumers (dew, bench tools) can write
+// provider-agnostic code without a per-call type switch.
+func New(name ProviderName, token string) (Provider, error) {
+	switch name {
+	case Hetzner:
+		return NewHetzner(token), nil
+	case DigitalOcean:
+		return NewDigitalOcean(token), nil
+	case Linode:
+		return NewLinode(token), nil
+	case Vultr:
+		return NewVultr(token), nil
+	default:
+		return nil, fmt.Errorf("capstan: unknown provider %q", name)
+	}
+}
