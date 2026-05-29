@@ -46,6 +46,7 @@ var tokenAliases = map[capstan.ProviderName][]string{
 		"DIGITALOCEAN_TOKEN",
 		"DIGITALOCEAN_ACCESS_TOKEN",
 		"DOCTL_ACCESS_TOKEN",
+		"DO_API_KEY",
 		"DO_TOKEN",
 	},
 	capstan.Linode: {

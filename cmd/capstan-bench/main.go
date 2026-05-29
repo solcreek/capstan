@@ -113,6 +113,7 @@ var tokenAliases = map[capstan.ProviderName][]string{
 		"DIGITALOCEAN_TOKEN",        // Terraform digitalocean/digitalocean
 		"DIGITALOCEAN_ACCESS_TOKEN", // doctl official
 		"DOCTL_ACCESS_TOKEN",        // doctl env alias
+		"DO_API_KEY",                // common shorthand
 		"DO_TOKEN",                  // common shorthand
 	},
 	capstan.Linode: {

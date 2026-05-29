@@ -59,7 +59,7 @@ Terraform's provider, and common shorthand:
 | Provider | Aliases (priority order) |
 |---|---|
 | Hetzner | `HCLOUD_TOKEN`, `HETZNER_API_TOKEN`, `HETZNER_TOKEN` |
-| DigitalOcean | `DIGITALOCEAN_TOKEN`, `DIGITALOCEAN_ACCESS_TOKEN`, `DOCTL_ACCESS_TOKEN`, `DO_TOKEN` |
+| DigitalOcean | `DIGITALOCEAN_TOKEN`, `DIGITALOCEAN_ACCESS_TOKEN`, `DOCTL_ACCESS_TOKEN`, `DO_API_KEY`, `DO_TOKEN` |
 | Linode | `LINODE_TOKEN`, `LINODE_CLI_TOKEN` |
 | Vultr | `VULTR_API_KEY`, `VULTR_TOKEN` |
 
