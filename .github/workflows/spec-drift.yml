@@ -1,0 +1,86 @@
+name: spec-drift
+
+# Compares each provider's embedded spec (specs/<provider>.json) against the
+# live catalog API and reports drift via the action summary.
+#
+# Linode and Vultr catalog endpoints are public — those run with no secret.
+# Hetzner and DigitalOcean require Bearer auth; when the secret is unset, the
+# job soft-skips (logs a warning, returns success) so this workflow stays
+# useful even on forks and in repos without secret config.
+
+on:
+  schedule:
+    - cron: '0 6 * * 1'   # Mondays 06:00 UTC — weekly drift report
+  workflow_dispatch:        # manual trigger from the Actions tab
+  push:
+    branches: [main]
+    paths:
+      - 'specs/**'
+      - 'cmd/capstan-spec-check/**'
+      - '.github/workflows/spec-drift.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'specs/**'
+      - 'cmd/capstan-spec-check/**'
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: ${{ matrix.provider }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false   # drift in one provider shouldn't mask drift in another
+      matrix:
+        provider: [hetzner, digitalocean, linode, vultr]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+          cache: true
+
+      - name: spec-check ${{ matrix.provider }}
+        env:
+          # Required for hetzner / digitalocean. Empty for linode / vultr
+          # (their catalog endpoints don't need auth). Set these as repo or
+          # org secrets to enable drift detection for the auth'd providers.
+          HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
+          DO_API_KEY: ${{ secrets.DO_API_KEY }}
+        run: |
+          set +e
+          go run ./cmd/capstan-spec-check --provider ${{ matrix.provider }} > drift.md 2>&1
+          status=$?
+
+          cat drift.md
+
+          {
+            echo "## ${{ matrix.provider }}"
+            cat drift.md
+            echo ""
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          # Tool exit 2 == "no token in env". For providers whose catalog
+          # endpoint needs auth (hetzner, digitalocean), this means the
+          # corresponding secret isn't configured — soft-skip rather than
+          # fail the matrix entry.
+          if [ $status -eq 2 ]; then
+            echo "::warning::No token for ${{ matrix.provider }} — set HCLOUD_TOKEN or DO_API_KEY repo/org secret to enable"
+            exit 0
+          fi
+
+          # Weekly schedule: drift is informational. The summary is the
+          # signal; failing every week on the same drift trains us to ignore
+          # the red badge. PR and push events get hard fail so broken specs
+          # can't merge silently.
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            if [ $status -eq 1 ]; then
+              echo "::warning::Drift detected for ${{ matrix.provider }}; see job summary"
+            fi
+            exit 0
+          fi
+
+          exit $status
