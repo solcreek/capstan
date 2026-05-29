@@ -1,25 +1,19 @@
 package capstan
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
 )
 
 type DigitalOceanProvider struct {
-	token  string
-	spec   *ProviderSpec
-	client *http.Client
+	spec *ProviderSpec
+	http *httpClient
 }
 
 func NewDigitalOcean(token string) *DigitalOceanProvider {
 	return &DigitalOceanProvider{
-		token:  token,
-		spec:   Spec(DigitalOcean),
-		client: &http.Client{},
+		spec: Spec(DigitalOcean),
+		http: newHTTPClient("digitalocean", token),
 	}
 }
 
@@ -33,7 +27,7 @@ func (d *DigitalOceanProvider) Regions(ctx context.Context) ([]Region, error) {
 			Available bool   `json:"available"`
 		} `json:"regions"`
 	}
-	if err := d.get(ctx, "/regions?per_page=50", &resp); err != nil {
+	if err := d.http.GET(ctx, d.spec.BaseURL,"/regions?per_page=50", &resp); err != nil {
 		return nil, err
 	}
 	var regions []Region
@@ -58,7 +52,7 @@ func (d *DigitalOceanProvider) Plans(ctx context.Context, region string) ([]Plan
 			Regions   []string `json:"regions"`
 		} `json:"sizes"`
 	}
-	if err := d.get(ctx, "/sizes?per_page=200", &resp); err != nil {
+	if err := d.http.GET(ctx, d.spec.BaseURL,"/sizes?per_page=200", &resp); err != nil {
 		return nil, err
 	}
 	var plans []Plan
@@ -106,7 +100,7 @@ func (d *DigitalOceanProvider) Create(ctx context.Context, opts CreateOpts) (*Se
 	var resp struct {
 		Droplet doDroplet `json:"droplet"`
 	}
-	if err := d.post(ctx, "/droplets", body, &resp); err != nil {
+	if err := d.http.POST(ctx, d.spec.BaseURL,"/droplets", body, &resp); err != nil {
 		return nil, err
 	}
 	return d.toServer(resp.Droplet), nil
@@ -116,14 +110,14 @@ func (d *DigitalOceanProvider) Get(ctx context.Context, id string) (*Server, err
 	var resp struct {
 		Droplet doDroplet `json:"droplet"`
 	}
-	if err := d.get(ctx, "/droplets/"+id, &resp); err != nil {
+	if err := d.http.GET(ctx, d.spec.BaseURL,"/droplets/"+id, &resp); err != nil {
 		return nil, err
 	}
 	return d.toServer(resp.Droplet), nil
 }
 
 func (d *DigitalOceanProvider) Destroy(ctx context.Context, id string) error {
-	return d.del(ctx, "/droplets/"+id)
+	return d.http.DELETE(ctx, d.spec.BaseURL,"/droplets/"+id)
 }
 
 func (d *DigitalOceanProvider) EstimateMonthlyCost(plan string) int {
@@ -203,63 +197,3 @@ func (d *DigitalOceanProvider) toServer(s doDroplet) *Server {
 	return srv
 }
 
-func (d *DigitalOceanProvider) get(ctx context.Context, path string, out any) error {
-	req, err := http.NewRequestWithContext(ctx, "GET", d.spec.BaseURL+path, nil)
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Authorization", "Bearer "+d.token)
-	req.Header.Set("Accept", "application/json")
-	resp, err := d.client.Do(req)
-	if err != nil {
-		return fmt.Errorf("capstan: digitalocean GET %s: %w", path, err)
-	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode >= 400 {
-		return fmt.Errorf("capstan: digitalocean GET %s: %d %s", path, resp.StatusCode, body)
-	}
-	return json.Unmarshal(body, out)
-}
-
-func (d *DigitalOceanProvider) post(ctx context.Context, path string, payload any, out any) error {
-	data, err := json.Marshal(payload)
-	if err != nil {
-		return err
-	}
-	req, err := http.NewRequestWithContext(ctx, "POST", d.spec.BaseURL+path, bytes.NewReader(data))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Authorization", "Bearer "+d.token)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
-	resp, err := d.client.Do(req)
-	if err != nil {
-		return fmt.Errorf("capstan: digitalocean POST %s: %w", path, err)
-	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode >= 400 {
-		return fmt.Errorf("capstan: digitalocean POST %s: %d %s", path, resp.StatusCode, body)
-	}
-	return json.Unmarshal(body, out)
-}
-
-func (d *DigitalOceanProvider) del(ctx context.Context, path string) error {
-	req, err := http.NewRequestWithContext(ctx, "DELETE", d.spec.BaseURL+path, nil)
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Authorization", "Bearer "+d.token)
-	resp, err := d.client.Do(req)
-	if err != nil {
-		return fmt.Errorf("capstan: digitalocean DELETE %s: %w", path, err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 400 {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("capstan: digitalocean DELETE %s: %d %s", path, resp.StatusCode, body)
-	}
-	return nil
-}

@@ -1,12 +1,8 @@
 package capstan
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
 	"time"
 )
 
@@ -23,16 +19,14 @@ func sleepCtx(ctx context.Context, ms int) error {
 }
 
 type HetznerProvider struct {
-	token  string
-	spec   *ProviderSpec
-	client *http.Client
+	spec *ProviderSpec
+	http *httpClient
 }
 
 func NewHetzner(token string) *HetznerProvider {
 	return &HetznerProvider{
-		token:  token,
-		spec:   Spec(Hetzner),
-		client: &http.Client{},
+		spec: Spec(Hetzner),
+		http: newHTTPClient("hetzner", token),
 	}
 }
 
@@ -48,7 +42,7 @@ func (h *HetznerProvider) Regions(ctx context.Context) ([]Region, error) {
 			City        string `json:"city"`
 		} `json:"locations"`
 	}
-	if err := h.get(ctx, "/locations?per_page=50", &resp); err != nil {
+	if err := h.http.GET(ctx, h.spec.BaseURL,"/locations?per_page=50", &resp); err != nil {
 		return nil, err
 	}
 	regions := make([]Region, len(resp.Locations))
@@ -75,7 +69,7 @@ func (h *HetznerProvider) Plans(ctx context.Context, region string) ([]Plan, err
 			} `json:"prices"`
 		} `json:"server_types"`
 	}
-	if err := h.get(ctx, "/server_types?per_page=50", &resp); err != nil {
+	if err := h.http.GET(ctx, h.spec.BaseURL,"/server_types?per_page=50", &resp); err != nil {
 		return nil, err
 	}
 	var plans []Plan
@@ -120,7 +114,7 @@ func (h *HetznerProvider) Create(ctx context.Context, opts CreateOpts) (*Server,
 	var resp struct {
 		Server hetznerServer `json:"server"`
 	}
-	if err := h.post(ctx, "/servers", body, &resp); err != nil {
+	if err := h.http.POST(ctx, h.spec.BaseURL,"/servers", body, &resp); err != nil {
 		return nil, err
 	}
 	return h.toServer(resp.Server), nil
@@ -130,7 +124,7 @@ func (h *HetznerProvider) Get(ctx context.Context, id string) (*Server, error) {
 	var resp struct {
 		Server hetznerServer `json:"server"`
 	}
-	if err := h.get(ctx, "/servers/"+id, &resp); err != nil {
+	if err := h.http.GET(ctx, h.spec.BaseURL,"/servers/"+id, &resp); err != nil {
 		return nil, err
 	}
 	return h.toServer(resp.Server), nil
@@ -170,7 +164,7 @@ func (h *HetznerProvider) List(ctx context.Context, opts ListOpts) ([]Server, er
 				} `json:"pagination"`
 			} `json:"meta"`
 		}
-		if err := h.get(ctx, path, &resp); err != nil {
+		if err := h.http.GET(ctx, h.spec.BaseURL,path, &resp); err != nil {
 			return nil, err
 		}
 		for _, s := range resp.Servers {
@@ -204,7 +198,7 @@ func (h *HetznerProvider) action(ctx context.Context, id, verb string) (*Action,
 	var resp struct {
 		Action hetznerAction `json:"action"`
 	}
-	if err := h.post(ctx, "/servers/"+id+"/actions/"+verb, map[string]any{}, &resp); err != nil {
+	if err := h.http.POST(ctx, h.spec.BaseURL,"/servers/"+id+"/actions/"+verb, map[string]any{}, &resp); err != nil {
 		return nil, err
 	}
 	return h.toAction(resp.Action), nil
@@ -215,7 +209,7 @@ func (h *HetznerProvider) WaitForAction(ctx context.Context, actionID string) (*
 		var resp struct {
 			Action hetznerAction `json:"action"`
 		}
-		if err := h.get(ctx, "/actions/"+actionID, &resp); err != nil {
+		if err := h.http.GET(ctx, h.spec.BaseURL,"/actions/"+actionID, &resp); err != nil {
 			return nil, err
 		}
 		a := h.toAction(resp.Action)
@@ -236,7 +230,7 @@ func (h *HetznerProvider) WaitForAction(ctx context.Context, actionID string) (*
 }
 
 func (h *HetznerProvider) Destroy(ctx context.Context, id string) error {
-	return h.del(ctx, "/servers/"+id)
+	return h.http.DELETE(ctx, h.spec.BaseURL,"/servers/"+id)
 }
 
 func (h *HetznerProvider) EstimateMonthlyCost(plan string) int {
@@ -309,63 +303,3 @@ func (h *HetznerProvider) toServer(s hetznerServer) *Server {
 	return srv
 }
 
-func (h *HetznerProvider) get(ctx context.Context, path string, out any) error {
-	req, err := http.NewRequestWithContext(ctx, "GET", h.spec.BaseURL+path, nil)
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Authorization", "Bearer "+h.token)
-	req.Header.Set("Accept", "application/json")
-	resp, err := h.client.Do(req)
-	if err != nil {
-		return fmt.Errorf("capstan: hetzner GET %s: %w", path, err)
-	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode >= 400 {
-		return fmt.Errorf("capstan: hetzner GET %s: %d %s", path, resp.StatusCode, body)
-	}
-	return json.Unmarshal(body, out)
-}
-
-func (h *HetznerProvider) post(ctx context.Context, path string, payload any, out any) error {
-	data, err := json.Marshal(payload)
-	if err != nil {
-		return err
-	}
-	req, err := http.NewRequestWithContext(ctx, "POST", h.spec.BaseURL+path, bytes.NewReader(data))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Authorization", "Bearer "+h.token)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
-	resp, err := h.client.Do(req)
-	if err != nil {
-		return fmt.Errorf("capstan: hetzner POST %s: %w", path, err)
-	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode >= 400 {
-		return fmt.Errorf("capstan: hetzner POST %s: %d %s", path, resp.StatusCode, body)
-	}
-	return json.Unmarshal(body, out)
-}
-
-func (h *HetznerProvider) del(ctx context.Context, path string) error {
-	req, err := http.NewRequestWithContext(ctx, "DELETE", h.spec.BaseURL+path, nil)
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Authorization", "Bearer "+h.token)
-	resp, err := h.client.Do(req)
-	if err != nil {
-		return fmt.Errorf("capstan: hetzner DELETE %s: %w", path, err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 400 {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("capstan: hetzner DELETE %s: %d %s", path, resp.StatusCode, body)
-	}
-	return nil
-}

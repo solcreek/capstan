@@ -1,27 +1,21 @@
 package capstan
 
 import (
-	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/base64"
-	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
 )
 
 type LinodeProvider struct {
-	token  string
-	spec   *ProviderSpec
-	client *http.Client
+	spec *ProviderSpec
+	http *httpClient
 }
 
 func NewLinode(token string) *LinodeProvider {
 	return &LinodeProvider{
-		token:  token,
-		spec:   Spec(Linode),
-		client: &http.Client{},
+		spec: Spec(Linode),
+		http: newHTTPClient("linode", token),
 	}
 }
 
@@ -36,7 +30,7 @@ func (l *LinodeProvider) Regions(ctx context.Context) ([]Region, error) {
 			Status  string `json:"status"`
 		} `json:"data"`
 	}
-	if err := l.get(ctx, "/regions?page_size=100", &resp); err != nil {
+	if err := l.http.GET(ctx, l.spec.BaseURL,"/regions?page_size=100", &resp); err != nil {
 		return nil, err
 	}
 	var regions []Region
@@ -59,7 +53,7 @@ func (l *LinodeProvider) Plans(ctx context.Context, region string) ([]Plan, erro
 			Disk   int    `json:"disk"`
 		} `json:"data"`
 	}
-	if err := l.get(ctx, "/linode/types?page_size=100", &resp); err != nil {
+	if err := l.http.GET(ctx, l.spec.BaseURL,"/linode/types?page_size=100", &resp); err != nil {
 		return nil, err
 	}
 	plans := make([]Plan, len(resp.Data))
@@ -97,7 +91,7 @@ func (l *LinodeProvider) Create(ctx context.Context, opts CreateOpts) (*Server, 
 	}
 
 	var s linodeInstance
-	if err := l.post(ctx, "/linode/instances", body, &s); err != nil {
+	if err := l.http.POST(ctx, l.spec.BaseURL,"/linode/instances", body, &s); err != nil {
 		return nil, err
 	}
 	return l.toServer(s), nil
@@ -105,14 +99,14 @@ func (l *LinodeProvider) Create(ctx context.Context, opts CreateOpts) (*Server, 
 
 func (l *LinodeProvider) Get(ctx context.Context, id string) (*Server, error) {
 	var s linodeInstance
-	if err := l.get(ctx, "/linode/instances/"+id, &s); err != nil {
+	if err := l.http.GET(ctx, l.spec.BaseURL,"/linode/instances/"+id, &s); err != nil {
 		return nil, err
 	}
 	return l.toServer(s), nil
 }
 
 func (l *LinodeProvider) Destroy(ctx context.Context, id string) error {
-	return l.del(ctx, "/linode/instances/"+id)
+	return l.http.DELETE(ctx, l.spec.BaseURL,"/linode/instances/"+id)
 }
 
 func (l *LinodeProvider) EstimateMonthlyCost(plan string) int {
@@ -180,66 +174,6 @@ func (l *LinodeProvider) toServer(s linodeInstance) *Server {
 	return srv
 }
 
-func (l *LinodeProvider) get(ctx context.Context, path string, out any) error {
-	req, err := http.NewRequestWithContext(ctx, "GET", l.spec.BaseURL+path, nil)
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Authorization", "Bearer "+l.token)
-	req.Header.Set("Accept", "application/json")
-	resp, err := l.client.Do(req)
-	if err != nil {
-		return fmt.Errorf("capstan: linode GET %s: %w", path, err)
-	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode >= 400 {
-		return fmt.Errorf("capstan: linode GET %s: %d %s", path, resp.StatusCode, body)
-	}
-	return json.Unmarshal(body, out)
-}
-
-func (l *LinodeProvider) post(ctx context.Context, path string, payload any, out any) error {
-	data, err := json.Marshal(payload)
-	if err != nil {
-		return err
-	}
-	req, err := http.NewRequestWithContext(ctx, "POST", l.spec.BaseURL+path, bytes.NewReader(data))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Authorization", "Bearer "+l.token)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
-	resp, err := l.client.Do(req)
-	if err != nil {
-		return fmt.Errorf("capstan: linode POST %s: %w", path, err)
-	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode >= 400 {
-		return fmt.Errorf("capstan: linode POST %s: %d %s", path, resp.StatusCode, body)
-	}
-	return json.Unmarshal(body, out)
-}
-
-func (l *LinodeProvider) del(ctx context.Context, path string) error {
-	req, err := http.NewRequestWithContext(ctx, "DELETE", l.spec.BaseURL+path, nil)
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Authorization", "Bearer "+l.token)
-	resp, err := l.client.Do(req)
-	if err != nil {
-		return fmt.Errorf("capstan: linode DELETE %s: %w", path, err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 400 {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("capstan: linode DELETE %s: %d %s", path, resp.StatusCode, body)
-	}
-	return nil
-}
 
 // randomRootPass generates a cryptographically random 32-byte base64url string.
 func randomRootPass() (string, error) {

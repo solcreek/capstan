@@ -1,27 +1,21 @@
 package capstan
 
 import (
-	"bytes"
 	"context"
 	"encoding/base64"
-	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
 	"strconv"
 )
 
 type VultrProvider struct {
-	token  string
-	spec   *ProviderSpec
-	client *http.Client
+	spec *ProviderSpec
+	http *httpClient
 }
 
 func NewVultr(token string) *VultrProvider {
 	return &VultrProvider{
-		token:  token,
-		spec:   Spec(Vultr),
-		client: &http.Client{},
+		spec: Spec(Vultr),
+		http: newHTTPClient("vultr", token),
 	}
 }
 
@@ -35,7 +29,7 @@ func (v *VultrProvider) Regions(ctx context.Context) ([]Region, error) {
 			Country string `json:"country"`
 		} `json:"regions"`
 	}
-	if err := v.get(ctx, "/regions?per_page=500", &resp); err != nil {
+	if err := v.http.GET(ctx, v.spec.BaseURL,"/regions?per_page=500", &resp); err != nil {
 		return nil, err
 	}
 	regions := make([]Region, len(resp.Regions))
@@ -59,7 +53,7 @@ func (v *VultrProvider) Plans(ctx context.Context, region string) ([]Plan, error
 			Disk     int    `json:"disk"`
 		} `json:"plans"`
 	}
-	if err := v.get(ctx, "/plans?per_page=500", &resp); err != nil {
+	if err := v.http.GET(ctx, v.spec.BaseURL,"/plans?per_page=500", &resp); err != nil {
 		return nil, err
 	}
 	plans := make([]Plan, len(resp.Plans))
@@ -96,7 +90,7 @@ func (v *VultrProvider) Create(ctx context.Context, opts CreateOpts) (*Server, e
 	var resp struct {
 		Instance vultrInstance `json:"instance"`
 	}
-	if err := v.post(ctx, "/instances", body, &resp); err != nil {
+	if err := v.http.POST(ctx, v.spec.BaseURL,"/instances", body, &resp); err != nil {
 		return nil, err
 	}
 	return v.toServer(resp.Instance), nil
@@ -106,14 +100,14 @@ func (v *VultrProvider) Get(ctx context.Context, id string) (*Server, error) {
 	var resp struct {
 		Instance vultrInstance `json:"instance"`
 	}
-	if err := v.get(ctx, "/instances/"+id, &resp); err != nil {
+	if err := v.http.GET(ctx, v.spec.BaseURL,"/instances/"+id, &resp); err != nil {
 		return nil, err
 	}
 	return v.toServer(resp.Instance), nil
 }
 
 func (v *VultrProvider) Destroy(ctx context.Context, id string) error {
-	return v.del(ctx, "/instances/"+id)
+	return v.http.DELETE(ctx, v.spec.BaseURL,"/instances/"+id)
 }
 
 func (v *VultrProvider) EstimateMonthlyCost(plan string) int {
@@ -197,63 +191,3 @@ func resolveVultrOSID(image string) (int, error) {
 	return id, nil
 }
 
-func (v *VultrProvider) get(ctx context.Context, path string, out any) error {
-	req, err := http.NewRequestWithContext(ctx, "GET", v.spec.BaseURL+path, nil)
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Authorization", "Bearer "+v.token)
-	req.Header.Set("Accept", "application/json")
-	resp, err := v.client.Do(req)
-	if err != nil {
-		return fmt.Errorf("capstan: vultr GET %s: %w", path, err)
-	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode >= 400 {
-		return fmt.Errorf("capstan: vultr GET %s: %d %s", path, resp.StatusCode, body)
-	}
-	return json.Unmarshal(body, out)
-}
-
-func (v *VultrProvider) post(ctx context.Context, path string, payload any, out any) error {
-	data, err := json.Marshal(payload)
-	if err != nil {
-		return err
-	}
-	req, err := http.NewRequestWithContext(ctx, "POST", v.spec.BaseURL+path, bytes.NewReader(data))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Authorization", "Bearer "+v.token)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
-	resp, err := v.client.Do(req)
-	if err != nil {
-		return fmt.Errorf("capstan: vultr POST %s: %w", path, err)
-	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode >= 400 {
-		return fmt.Errorf("capstan: vultr POST %s: %d %s", path, resp.StatusCode, body)
-	}
-	return json.Unmarshal(body, out)
-}
-
-func (v *VultrProvider) del(ctx context.Context, path string) error {
-	req, err := http.NewRequestWithContext(ctx, "DELETE", v.spec.BaseURL+path, nil)
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Authorization", "Bearer "+v.token)
-	resp, err := v.client.Do(req)
-	if err != nil {
-		return fmt.Errorf("capstan: vultr DELETE %s: %w", path, err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 400 {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("capstan: vultr DELETE %s: %d %s", path, resp.StatusCode, body)
-	}
-	return nil
-}
