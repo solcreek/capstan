@@ -99,19 +99,45 @@ func main() {
 	rec.printMarkdown(os.Stdout, pName)
 }
 
-func tokenForProvider(p capstan.ProviderName) (token, envName string) {
-	switch p {
-	case capstan.Hetzner:
-		return os.Getenv("HCLOUD_TOKEN"), "HCLOUD_TOKEN"
-	case capstan.DigitalOcean:
-		return os.Getenv("DIGITALOCEAN_TOKEN"), "DIGITALOCEAN_TOKEN"
-	case capstan.Linode:
-		return os.Getenv("LINODE_TOKEN"), "LINODE_TOKEN"
-	case capstan.Vultr:
-		return os.Getenv("VULTR_TOKEN"), "VULTR_TOKEN"
-	default:
-		return "", string(p)
+// tokenAliases lists the env var names checked per provider, in priority
+// order (first non-empty value wins). Covers the conventions used by each
+// vendor's official CLI, Terraform's provider, and common shorthand.
+var tokenAliases = map[capstan.ProviderName][]string{
+	capstan.Hetzner: {
+		"HCLOUD_TOKEN",       // hcloud CLI + Terraform hetznercloud/hcloud
+		"HETZNER_API_TOKEN",  // common in scripts and docs
+		"HETZNER_TOKEN",      // less common shorthand
+	},
+	capstan.DigitalOcean: {
+		"DIGITALOCEAN_TOKEN",        // Terraform digitalocean/digitalocean
+		"DIGITALOCEAN_ACCESS_TOKEN", // doctl official
+		"DOCTL_ACCESS_TOKEN",        // doctl env alias
+		"DO_TOKEN",                  // common shorthand
+	},
+	capstan.Linode: {
+		"LINODE_TOKEN",     // Terraform linode/linode
+		"LINODE_CLI_TOKEN", // linode-cli official
+	},
+	capstan.Vultr: {
+		"VULTR_API_KEY", // vultr-cli official
+		"VULTR_TOKEN",   // common shorthand
+	},
+}
+
+// tokenForProvider returns the first matching env var's value and the name
+// it came from. When no alias matches, returns an empty token and a
+// human-readable list of all alias names for the error message.
+func tokenForProvider(p capstan.ProviderName) (token, source string) {
+	names := tokenAliases[p]
+	for _, name := range names {
+		if v := os.Getenv(name); v != "" {
+			return v, name
+		}
 	}
+	if len(names) > 0 {
+		return "", strings.Join(names, " or ")
+	}
+	return "", string(p)
 }
 
 func parseConcurrency(s string) ([]int, error) {

@@ -52,12 +52,19 @@ HCLOUD_TOKEN=xxx go run ./cmd/capstan-bench \
 
 ## Tokens
 
-Read from the conventional env var per provider:
+The harness checks multiple env var names per provider, in priority order;
+the first non-empty value wins. Aliases cover each vendor's official CLI,
+Terraform's provider, and common shorthand:
 
-- `HCLOUD_TOKEN` (Hetzner)
-- `DIGITALOCEAN_TOKEN`
-- `LINODE_TOKEN`
-- `VULTR_TOKEN`
+| Provider | Aliases (priority order) |
+|---|---|
+| Hetzner | `HCLOUD_TOKEN`, `HETZNER_API_TOKEN`, `HETZNER_TOKEN` |
+| DigitalOcean | `DIGITALOCEAN_TOKEN`, `DIGITALOCEAN_ACCESS_TOKEN`, `DOCTL_ACCESS_TOKEN`, `DO_TOKEN` |
+| Linode | `LINODE_TOKEN`, `LINODE_CLI_TOKEN` |
+| Vultr | `VULTR_API_KEY`, `VULTR_TOKEN` |
+
+If none of the aliases are set, the harness exits with code 2 and prints
+the full alias list in the error message.
 
 ## Cost note
 
