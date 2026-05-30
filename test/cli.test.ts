@@ -146,6 +146,85 @@ describe('recommend', () => {
   })
 })
 
+describe('input hardening', () => {
+  it('rejects control characters in plan id', () => {
+    expect(() => cli.cmdPrice(['hetzner', 'cx23\x00'])).toThrow(ExitError)
+    const err = JSON.parse(stderrLines.at(-1)!)
+    expect(err.code).toBe('bad_arg')
+    expect(err.error).toContain('control character')
+  })
+
+  it('rejects query injection in plan id', () => {
+    expect(() => cli.cmdPrice(['hetzner', 'cx23?fields=name'])).toThrow(ExitError)
+    const err = JSON.parse(stderrLines.at(-1)!)
+    expect(err.code).toBe('bad_arg')
+  })
+
+  it('rejects URL-encoded segment in plan id', () => {
+    expect(() => cli.cmdPrice(['hetzner', '%2e%2e'])).toThrow(ExitError)
+    const err = JSON.parse(stderrLines.at(-1)!)
+    expect(err.code).toBe('bad_arg')
+  })
+
+  it('rejects whitespace in plan id', () => {
+    expect(() => cli.cmdPrice(['hetzner', 'cx 23'])).toThrow(ExitError)
+    expect(JSON.parse(stderrLines.at(-1)!).code).toBe('bad_arg')
+  })
+
+  it('rejects control char in geo', () => {
+    expect(() => cli.cmdRecommend(['--geo', 'japan\x01'])).toThrow(ExitError)
+    expect(JSON.parse(stderrLines.at(-1)!).code).toBe('bad_arg')
+  })
+
+  it('rejects unknown workload', () => {
+    expect(() => cli.cmdRecommend(['--geo', 'japan', '--workload', 'fake'])).toThrow(ExitError)
+    expect(JSON.parse(stderrLines.at(-1)!).code).toBe('bad_arg')
+  })
+
+  it('rejects unknown sla', () => {
+    expect(() => cli.cmdRecommend(['--geo', 'japan', '--sla', 'fake'])).toThrow(ExitError)
+    expect(JSON.parse(stderrLines.at(-1)!).code).toBe('bad_arg')
+  })
+})
+
+describe('describe (schema introspection)', () => {
+  it('lists all command names when called with no arg', () => {
+    cli.cmdDescribe([])
+    const out = lastJson()
+    expect(out.ok).toBe(true)
+    expect(out.commands).toContain('plans')
+    expect(out.commands).toContain('describe')
+  })
+
+  it('returns schema for plans', () => {
+    cli.cmdDescribe(['plans'])
+    const out = lastJson()
+    expect(out.ok).toBe(true)
+    expect(out.command).toBe('plans')
+    expect(out.positional[0].name).toBe('provider')
+    expect(out.positional[0].required).toBe(true)
+    expect(out.outputKeys).toContain('plans')
+    expect(out.exitCodes['0']).toBe('success')
+  })
+
+  it('returns schema for recommend with flag descriptions', () => {
+    cli.cmdDescribe(['recommend'])
+    const out = lastJson()
+    expect(out.flags.find((f: any) => f.name === '--geo').description).toContain('required')
+  })
+
+  it('errors on unknown command', () => {
+    expect(() => cli.cmdDescribe(['nonexistent'])).toThrow(ExitError)
+    const err = JSON.parse(stderrLines.at(-1)!)
+    expect(err.code).toBe('unknown_subcommand')
+  })
+
+  it('rejects injection in command name', () => {
+    expect(() => cli.cmdDescribe(['plans?id=foo'])).toThrow(ExitError)
+    expect(JSON.parse(stderrLines.at(-1)!).code).toBe('bad_arg')
+  })
+})
+
 describe('main dispatch', () => {
   it('--help prints usage', () => {
     cli.main(['--help'])

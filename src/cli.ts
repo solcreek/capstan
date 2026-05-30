@@ -93,10 +93,53 @@ const commonOpts: ParseArgsConfig['options'] = {
   help: { type: 'boolean', short: 'h' },
 }
 
+// ─── Input hardening ───────────────────────────────────────────────
+//
+// Agents hallucinate differently than humans typo. They tend to:
+//   - Embed query parameters in identifiers ("cx23?fields=name")
+//   - Generate invisible control characters from broken string handling
+//   - Pre-URL-encode strings expecting double-encoding ("%2e%2e")
+//   - Splice path segments ("../../.ssh") by confusing path math
+//
+// The CLI is the last validation point before we forward an identifier
+// to a provider API. Reject these classes of input loudly with a stable
+// error code rather than silently sanitizing — silent sanitization
+// trains agents that wrong input "works" and the bug surfaces deeper.
+
+const CONTROL_CHAR_RE = /[\x00-\x1f\x7f]/
+const SUSPICIOUS_CHAR_RE = /[?#%&<>\\\s]/
+
+export function rejectControlChars(value: string, field: string): void {
+  if (CONTROL_CHAR_RE.test(value)) {
+    emitError(
+      `${field} contains a control character (likely agent string-handling bug); strip and retry`,
+      'bad_arg',
+      2,
+    )
+  }
+}
+
+export function rejectQueryInjection(value: string, field: string): void {
+  if (SUSPICIOUS_CHAR_RE.test(value)) {
+    emitError(
+      `${field} contains an unsafe character (one of ?#%&<>\\ or whitespace); identifiers must be bare slugs`,
+      'bad_arg',
+      2,
+    )
+  }
+}
+
+// Combined helper for the common "validate a slug-like identifier" case.
+function checkSlug(value: string, field: string): void {
+  rejectControlChars(value, field)
+  rejectQueryInjection(value, field)
+}
+
 export function assertProvider(name: string | undefined): asserts name is ProviderName {
   if (!name) {
     emitError('provider name required', 'missing_arg', 2)
   }
+  checkSlug(name, 'provider')
   if (!(PROVIDERS as readonly string[]).includes(name)) {
     emitError(
       `unknown provider: ${name}. supported: ${PROVIDERS.join(', ')}`,
@@ -177,6 +220,7 @@ export function cmdPrice(argv: string[]): void {
   const planId = positionals[1]
   assertProvider(providerName)
   if (!planId) emitError('plan id required', 'missing_arg', 2)
+  checkSlug(planId, 'plan')
 
   const spec = SPECS[providerName]
   const cents = (spec.priceCents as Record<string, number>)[planId]
@@ -223,8 +267,29 @@ export function cmdRecommend(argv: string[]): void {
   }
 
   const geo = values.geo as string
+  checkSlug(geo, '--geo')
   if (!(GEOGRAPHIES as readonly string[]).includes(geo)) {
     emitError(`unknown geography: ${geo}. supported: ${GEOGRAPHIES.join(', ')}`, 'bad_arg', 2)
+  }
+  if (values.workload !== undefined) {
+    checkSlug(values.workload as string, '--workload')
+    if (!(WORKLOADS as readonly string[]).includes(values.workload as string)) {
+      emitError(
+        `unknown workload: ${values.workload}. supported: ${WORKLOADS.join(', ')}`,
+        'bad_arg',
+        2,
+      )
+    }
+  }
+  if (values.sla !== undefined) {
+    checkSlug(values.sla as string, '--sla')
+    if (!(SLA_TIERS as readonly string[]).includes(values.sla as string)) {
+      emitError(
+        `unknown sla tier: ${values.sla}. supported: ${SLA_TIERS.join(', ')}`,
+        'bad_arg',
+        2,
+      )
+    }
   }
 
   try {
@@ -250,6 +315,112 @@ export function cmdRecommend(argv: string[]): void {
   }
 }
 
+// ─── `describe` — schema introspection ─────────────────────────────
+//
+// Agents can `capstan describe <command>` to learn the args, flags, and
+// output shape at runtime — cheaper than reading --help text or stuffing
+// docs into a prompt. The CLI is the canonical source of truth for its
+// own schema, so this never drifts from reality.
+
+interface CommandSchema {
+  positional: { name: string; required: boolean; values?: readonly string[] }[]
+  flags: { name: string; type: string; description: string }[]
+  outputKeys: readonly string[]
+  exitCodes: Record<string, string>
+}
+
+const SCHEMAS: Record<string, CommandSchema> = {
+  providers: {
+    positional: [],
+    flags: [{ name: '--text', type: 'boolean', description: 'human-readable output' }],
+    outputKeys: ['ok', 'providers'],
+    exitCodes: { '0': 'success' },
+  },
+  workloads: {
+    positional: [],
+    flags: [{ name: '--text', type: 'boolean', description: 'human-readable output' }],
+    outputKeys: ['ok', 'workloads'],
+    exitCodes: { '0': 'success' },
+  },
+  'sla-tiers': {
+    positional: [],
+    flags: [{ name: '--text', type: 'boolean', description: 'human-readable output' }],
+    outputKeys: ['ok', 'slaTiers'],
+    exitCodes: { '0': 'success' },
+  },
+  geographies: {
+    positional: [],
+    flags: [{ name: '--text', type: 'boolean', description: 'human-readable output' }],
+    outputKeys: ['ok', 'geographies'],
+    exitCodes: { '0': 'success' },
+  },
+  plans: {
+    positional: [{ name: 'provider', required: true, values: PROVIDERS }],
+    flags: [{ name: '--text', type: 'boolean', description: 'human-readable output' }],
+    outputKeys: ['ok', 'provider', 'currency', 'plans'],
+    exitCodes: { '0': 'success', '2': 'missing or unknown provider' },
+  },
+  price: {
+    positional: [
+      { name: 'provider', required: true, values: PROVIDERS },
+      { name: 'plan', required: true },
+    ],
+    flags: [{ name: '--text', type: 'boolean', description: 'human-readable output' }],
+    outputKeys: ['ok', 'provider', 'plan', 'priceMonthlyCents', 'priceCurrency'],
+    exitCodes: { '0': 'success', '1': 'unknown_plan (spec drift candidate)', '2': 'bad args' },
+  },
+  recommend: {
+    positional: [],
+    flags: [
+      { name: '--geo', type: 'string', description: 'geography (required); see `capstan geographies`' },
+      { name: '--workload', type: 'string', description: 'workload class; default "general"' },
+      { name: '--sla', type: 'string', description: 'SLA tier; default "standard"' },
+      { name: '--text', type: 'boolean', description: 'human-readable output' },
+    ],
+    outputKeys: ['ok', 'primary', 'fallbacks', 'caveats'],
+    exitCodes: { '0': 'success', '2': 'missing or bad arg' },
+  },
+  describe: {
+    positional: [{ name: 'command', required: false }],
+    flags: [{ name: '--text', type: 'boolean', description: 'human-readable output' }],
+    outputKeys: ['ok', 'command', 'positional', 'flags', 'outputKeys', 'exitCodes'],
+    exitCodes: { '0': 'success', '2': 'unknown command' },
+  },
+}
+
+export function cmdDescribe(argv: string[]): void {
+  const { values, positionals } = parseArgs({
+    args: argv,
+    options: commonOpts,
+    allowPositionals: true,
+    strict: false,
+  })
+  const target = positionals[0]
+  if (!target) {
+    // No target → list all command names
+    emit(
+      { ok: true, commands: Object.keys(SCHEMAS).sort() },
+      (d) => d.commands.join('\n'),
+      optsOf(values),
+    )
+    return
+  }
+  checkSlug(target, 'command')
+  const schema = SCHEMAS[target]
+  if (!schema) {
+    emitError(
+      `no schema for command "${target}"; run \`capstan describe\` for the list`,
+      'unknown_subcommand',
+      2,
+    )
+  }
+  emit(
+    { ok: true, command: target, ...schema },
+    (d) => JSON.stringify(d, null, 2),
+    optsOf(values),
+  )
+}
+
 // ─── Dispatch ──────────────────────────────────────────────────────
 
 const SUBCOMMANDS: Record<string, (argv: string[]) => void> = {
@@ -260,6 +431,7 @@ const SUBCOMMANDS: Record<string, (argv: string[]) => void> = {
   plans: cmdPlans,
   price: cmdPrice,
   recommend: cmdRecommend,
+  describe: cmdDescribe,
 }
 
 const HELP = `capstan — multi-provider VPS lookup CLI
@@ -275,6 +447,7 @@ OFFLINE COMMANDS (no token, instant)
   plans <provider>                         List plans (size + price) from spec
   price <provider> <plan>                  Single plan monthly price (cents)
   recommend --geo <g> [--workload] [--sla] Placement recommendation
+  describe [command]                       Schema for a command (or list all)
 
 GLOBAL FLAGS
   --text          Human-readable output (default: JSON for agent use)
