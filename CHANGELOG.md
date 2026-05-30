@@ -128,13 +128,73 @@ secret is set (`HCLOUD_TOKEN`, `DO_API_KEY` — repo or org level).
 Schedule runs are informational (warning, never red-badges); PR/push
 runs hard-fail on drift to catch broken specs before merge.
 
+### TypeScript CLI (agent-first design)
+
+`capstan` ships as a CLI too. Output is JSON by default (agent-first);
+`--text` switches to human view. Every error is JSON on stderr with a
+stable `code`. Designed against Justin Poehnelt's "You Need to Rewrite
+Your CLI for AI Agents" — predictability over discoverability.
+
+```
+capstan providers                          List 4 provider names
+capstan workloads | sla-tiers | geographies  Enum lookups
+capstan plans <provider> [--ndjson] [--fields]   From spec
+capstan price <provider> <plan>            Single price
+capstan recommend --geo <g> [--workload] [--sla] Placement
+capstan describe [command]                 Runtime schema introspection
+capstan skill [name]                       Emit bundled agent skill
+capstan list <provider>                    Live VPS list (needs token)
+capstan drift <provider>                   Live spec drift (needs token)
+```
+
+Stable error codes: `unknown_subcommand`, `unknown_provider`,
+`unknown_plan`, `unknown_skill`, `missing_arg`, `bad_arg`, `no_token`,
+`auth`, `network`, `recommend_failed`. Exit codes documented per
+command via `capstan describe <cmd>`.
+
+#### Agent discovery surfaces
+
+- **Bundled in npm package** — after `npm i -g capstan`, run
+  `capstan skill capstan-overview` to load the curated agent context
+- **skills.sh registry** — `npx skills add solcreek/capstan` installs
+  the same SKILL.md via the skills.sh CLI. `skills.sh.json` declares
+  the grouping; `skills/capstan-overview/SKILL.md` matches the
+  vercel-labs/agent-skills convention
+
+#### Agent-first features
+
+- **`capstan describe`** — runtime schema (positional, flags,
+  outputKeys, exitCodes) for every subcommand. Agents self-serve
+  instead of parsing English help text
+- **Input hardening** — rejects control characters, query/fragment
+  injection, URL-encoding tricks, whitespace. Stable `bad_arg` code
+  with a message that hints at the likely agent-side bug
+- **`--ndjson` + `--fields`** on `plans` and `list` — context-window
+  discipline. Cut per-call tokens by 60-80% when iterating
+
+### CI: weekly `spec-drift` workflow
+
+`.github/workflows/spec-drift.yml` runs `capstan-spec-check` against
+each provider on a Monday cron, on push to main affecting `specs/` or
+the tool, on PRs, and on manual dispatch. Linode and Vultr always run
+(public catalog); Hetzner and DigitalOcean run when the corresponding
+secret is set (`HCLOUD_TOKEN`, `DO_API_KEY` — repo or org level).
+Schedule runs are informational (warning, never red-badges); PR/push
+runs hard-fail on drift to catch broken specs before merge.
+
 ### Tests
 
-Go test count grew from 13 to ~50: 8 new Hetzner tests for the new
+Go test count grew from 13 to ~74: 8 new Hetzner tests for the new
 methods, 3 factory tests, 5 stats tests, 7 bench tests (token
 resolution, alias fallback, fallback ladder coverage, retryable-error
 classification), 5 spec-check tests (in-sync / deprecated-in-spec /
 new-in-API / both-sides / token alias). All green.
+
+TypeScript test count grew from 314 to 362: 48 new CLI tests covering
+each command's JSON output, --text mode, input hardening (control
+chars / query injection / URL-encoded / whitespace), --ndjson + --fields
+shape, describe self-introspection, skill bundled markdown emit, list
++ drift with mock provider injection.
 
 ## v0.3.0 — `recommendPlacement` posture module
 

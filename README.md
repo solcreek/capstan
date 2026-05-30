@@ -1,10 +1,27 @@
 # capstan
 
-> Multi-provider VPS lifecycle library — Hetzner, DigitalOcean, Linode, Vultr. TypeScript + Go, one shared spec.
+> Multi-provider VPS lifecycle library **and CLI** — Hetzner, DigitalOcean, Linode, Vultr. TypeScript + Go, one shared spec, agent-first.
 
+## Install
+
+### As an npm CLI (`capstan ...`)
 ```bash
-npm i capstan            # TypeScript
-go get github.com/solcreek/capstan  # Go
+npm i -g capstan
+capstan --help
+# or one-shot without install
+npx capstan providers
+```
+
+### As an agent skill (skills.sh)
+```bash
+npx skills add solcreek/capstan
+```
+After install, the agent can self-load context with `capstan skill capstan-overview`.
+
+### As a library
+```bash
+npm i capstan                                  # TypeScript
+go get github.com/solcreek/capstan             # Go
 ```
 
 ## Quick start
@@ -93,7 +110,7 @@ One typed `Provider` interface with four working backends. Every implementation:
 | **Linode** | ✓ | ✓ | ✓ | ✓ | ✓ | 22 |
 | **Vultr** | ✓ | ✓ | ✓ | ✓ | ✓ | 27 |
 
-~360 tests total (314 TypeScript + ~50 Go). No network calls in tests — providers accept a `fetchImpl` injection (TS) and specs are embedded (Go).
+~436 tests total (362 TypeScript + 74 Go). No network calls in tests — providers accept a `fetchImpl` injection (TS) and specs are embedded (Go); the CLI's live commands use deps-based mock provider injection.
 
 ## Provider interface (TypeScript)
 
@@ -153,12 +170,46 @@ Hetzner is the reference for the v0.5 methods; DigitalOcean / Linode /
 Vultr return `ErrNotImplemented` for `List` / `PowerOn/Off/Restart` /
 `WaitForAction` until a real consumer drives that work.
 
-## Tools (in this repo)
+## CLI (`capstan ...`)
+
+Agent-first by design: JSON output by default, stable error codes,
+runtime schema introspection, input hardening against agent
+hallucinations.
+
+```
+capstan providers                         List 4 provider names
+capstan plans <provider>                  Plans (size + price) from spec
+  --ndjson                                One plan per line
+  --fields id,priceMonthlyCents           Narrow plan keys
+capstan price <provider> <plan>           Single plan price
+capstan recommend --geo <g>               Placement recommendation
+                  [--workload] [--sla]
+capstan describe [command]                Runtime schema for a command
+capstan skill [name]                      Emit bundled agent skill
+capstan list <provider>                   Live VPS list (needs token)
+capstan drift <provider>                  Live spec drift (needs token)
+```
+
+Token aliases for live commands:
+
+| Provider | Aliases (priority order) |
+|---|---|
+| Hetzner | `HCLOUD_TOKEN`, `HETZNER_API_TOKEN`, `HETZNER_TOKEN` |
+| DigitalOcean | `DIGITALOCEAN_TOKEN`, `DIGITALOCEAN_ACCESS_TOKEN`, `DOCTL_ACCESS_TOKEN`, `DO_API_KEY`, `DO_TOKEN` |
+| Linode | `LINODE_TOKEN`, `LINODE_CLI_TOKEN` |
+| Vultr | `VULTR_API_KEY`, `VULTR_TOKEN` |
+
+Stable error codes: `unknown_subcommand`, `unknown_provider`,
+`unknown_plan`, `unknown_skill`, `missing_arg`, `bad_arg`, `no_token`,
+`auth`, `network`, `recommend_failed`. Exit codes documented per
+command via `capstan describe`.
+
+## Companion Go tools (in `cmd/`)
 
 | Tool | Purpose |
 |---|---|
-| `cmd/capstan-bench` | Measure provider API latency end-to-end (reads, fanout, full mutation lifecycle). Used to settle architecture choices with data |
-| `cmd/capstan-spec-check` | Compare embedded `specs/<provider>.json` against the live provider catalog; report drift |
+| `capstan-bench` | Measure provider API latency end-to-end (reads, fanout, full mutation lifecycle). Used to settle architecture choices with data |
+| `capstan-spec-check` | Compare embedded `specs/<provider>.json` against the live provider catalog; report drift |
 
 `spec-drift` runs weekly via GitHub Actions. Linode and Vultr catalog
 endpoints are public so those checks need no secrets; Hetzner and
@@ -214,9 +265,13 @@ const r = recommendPlacement({
 - `0.2` — ephemeral session helper
 - `0.3` — placement posture + shared JSON specs + Go module
 - `0.4` — Go HTTP client (create/destroy/get VPS via provider APIs)
-- `0.5` — Go `Provider` extended with `List` + power actions;
-  `New(name, token)` factory; shared `httpClient`; `cmd/capstan-bench`
-  + `cmd/capstan-spec-check`; weekly drift CI; Hetzner spec re-synced
+- `0.5` — Agent-first TypeScript CLI (`capstan` bin, `npx capstan` /
+  `npx skills add solcreek/capstan`) with offline + live commands,
+  `describe` schema introspection, input hardening, `--ndjson` +
+  `--fields`, bundled SKILL.md compatible with skills.sh. Go
+  `Provider` extended with `List` + power actions; `New(name, token)`
+  factory; shared `httpClient`; `cmd/capstan-bench` +
+  `cmd/capstan-spec-check`; weekly drift CI; Hetzner spec re-synced
   to current Cloud API (current)
 
 ## Why "capstan"?
