@@ -464,6 +464,23 @@ const SCHEMAS: Record<string, CommandSchema> = {
     outputKeys: ['ok', 'provider', 'inSync', 'onlyInSpec', 'onlyInAPI', 'hasDrift'],
     exitCodes: { '0': 'no drift', '1': 'drift detected (or network/auth failure)', '2': 'no token; for public-catalog providers, use Go binary capstan-spec-check' },
   },
+  destroy: {
+    positional: [
+      { name: 'provider', required: true, values: PROVIDERS },
+      { name: 'id', required: true },
+    ],
+    flags: [
+      { name: '--text', type: 'boolean', description: 'human-readable output' },
+      { name: '--yes', type: 'boolean', description: 'actually destroy (default is dry-run)' },
+      { name: '--dry-run', type: 'boolean', description: 'explicit dry-run; overrides --yes' },
+    ],
+    outputKeys: ['ok', 'mode', 'wouldDestroy', 'destroyed', 'hint'],
+    exitCodes: {
+      '0': 'success (dry-run or actual destroy)',
+      '1': 'not_found, auth, or network failure',
+      '2': 'bad args or no token',
+    },
+  },
 }
 
 export function cmdDescribe(argv: string[]): void {
@@ -656,6 +673,94 @@ export async function cmdDrift(argv: string[], deps: LiveDeps = {}): Promise<voi
   if (hasDrift) process.exit(1)
 }
 
+// ─── `destroy <provider> <id>` — destructive op with safety rails ─
+//
+// Per Justin Poehnelt's "rewrite for agents" guidance: mutating
+// operations need an explicit gate so agents can "think out loud"
+// before committing. Default behavior here is DRY-RUN — we Get the
+// server, show what would be destroyed, and exit ok without
+// touching it. Pass --yes to actually destroy. --dry-run is also
+// accepted explicitly for callers that want to be unambiguous.
+
+export async function cmdDestroy(argv: string[], deps: LiveDeps = {}): Promise<void> {
+  const { values, positionals } = parseArgs({
+    args: argv,
+    options: {
+      text: { type: 'boolean' },
+      help: { type: 'boolean', short: 'h' },
+      'dry-run': { type: 'boolean' },
+      yes: { type: 'boolean' },
+    },
+    allowPositionals: true,
+    strict: false,
+  })
+  const providerName = positionals[0]
+  const id = positionals[1]
+  assertProvider(providerName)
+  if (!id) emitError('server id required', 'missing_arg', 2)
+  checkSlug(id, 'server id')
+
+  const { token, source } = resolveToken(providerName)
+  if (!token) {
+    emitError(`no token in env for ${providerName} (set ${source})`, 'no_token', 2)
+  }
+
+  const make = deps.createProvider ?? createProvider
+  const p = make(providerName, { token, fetchImpl: deps.fetchImpl })
+
+  // Confirm the server exists and show what it is before any mutation.
+  let server
+  try {
+    server = await p.getVPS(id)
+  } catch (err) {
+    const e = err as { code?: string; message?: string }
+    emitError(e.message ?? String(err), e.code === 'unauthorized' ? 'auth' : 'network', 1)
+  }
+  if (!server) {
+    emitError(`server "${id}" not found in ${providerName} account`, 'not_found', 1)
+  }
+
+  const wantsExecute = Boolean(values.yes) && !values['dry-run']
+
+  if (!wantsExecute) {
+    emit(
+      {
+        ok: true,
+        mode: 'dry-run',
+        provider: providerName,
+        wouldDestroy: server,
+        hint: 'pass --yes to actually destroy; this default-dry-run is a safety gate for agent callers',
+      },
+      (d) =>
+        [
+          'DRY RUN — would destroy:',
+          `  ${d.wouldDestroy.name} (${d.wouldDestroy.id})`,
+          `  status:    ${d.wouldDestroy.status}`,
+          `  ipv4:      ${d.wouldDestroy.publicIPv4 ?? '(none)'}`,
+          `  region:    ${d.wouldDestroy.region ?? '(unknown)'}`,
+          `  size:      ${d.wouldDestroy.size ?? '(unknown)'}`,
+          '',
+          'Re-run with --yes to actually destroy.',
+        ].join('\n'),
+      optsOf(values),
+    )
+    return
+  }
+
+  try {
+    await p.destroyVPS(id)
+  } catch (err) {
+    const e = err as { code?: string; message?: string }
+    emitError(e.message ?? String(err), e.code === 'unauthorized' ? 'auth' : 'network', 1)
+  }
+
+  emit(
+    { ok: true, destroyed: { provider: providerName, id, name: server.name } },
+    (d) => `destroyed ${d.destroyed.name} (${d.destroyed.id})`,
+    optsOf(values),
+  )
+}
+
 interface LiveDeps {
   fetchImpl?: typeof fetch
   createProvider?: typeof createProvider
@@ -742,6 +847,7 @@ const SUBCOMMANDS: Record<string, (argv: string[]) => void | Promise<void>> = {
   skill: cmdSkill,
   list: (argv) => cmdList(argv),
   drift: (argv) => cmdDrift(argv),
+  destroy: (argv) => cmdDestroy(argv),
 }
 
 const HELP = `capstan — multi-provider VPS lookup CLI
@@ -765,6 +871,7 @@ AGENT-FIRST FEATURES
 LIVE COMMANDS (need token)
   list <provider>                          List current VPSes for the account
   drift <provider>                         Live spec drift vs provider API
+  destroy <provider> <id> [--yes]          Destroy a VPS (default = dry-run)
 
 GLOBAL FLAGS
   --text          Human-readable output (default: JSON for agent use)

@@ -399,6 +399,83 @@ describe('drift (live spec drift)', () => {
   })
 })
 
+describe('destroy (dry-run by default)', () => {
+  beforeEach(() => { setHetznerEnv('test-token-for-destroy') })
+  afterEach(() => { clearHetznerEnv() })
+
+  function mockProvWithVPS(opts: { vps: unknown; destroyCalls: { count: number } }) {
+    return (() => ({
+      name: 'hetzner',
+      getVPS: async () => opts.vps,
+      destroyVPS: async () => { opts.destroyCalls.count++ },
+    })) as unknown as Parameters<typeof cli.cmdDestroy>[1] extends { createProvider?: infer F } ? F : never
+  }
+
+  it('default is dry-run: returns wouldDestroy without calling destroyVPS', async () => {
+    const calls = { count: 0 }
+    await cli.cmdDestroy(['hetzner', '12345'], {
+      createProvider: mockProvWithVPS({
+        vps: { id: '12345', name: 'web', status: 'running' },
+        destroyCalls: calls,
+      }),
+    })
+    const out = lastJson()
+    expect(out.mode).toBe('dry-run')
+    expect(out.wouldDestroy.id).toBe('12345')
+    expect(calls.count).toBe(0)
+  })
+
+  it('--yes triggers actual destroyVPS', async () => {
+    const calls = { count: 0 }
+    await cli.cmdDestroy(['hetzner', '12345', '--yes'], {
+      createProvider: mockProvWithVPS({
+        vps: { id: '12345', name: 'web', status: 'running' },
+        destroyCalls: calls,
+      }),
+    })
+    const out = lastJson()
+    expect(out.destroyed.id).toBe('12345')
+    expect(calls.count).toBe(1)
+  })
+
+  it('--dry-run + --yes still dry-runs (--dry-run wins)', async () => {
+    const calls = { count: 0 }
+    await cli.cmdDestroy(['hetzner', '12345', '--yes', '--dry-run'], {
+      createProvider: mockProvWithVPS({
+        vps: { id: '12345', name: 'web', status: 'running' },
+        destroyCalls: calls,
+      }),
+    })
+    expect(lastJson().mode).toBe('dry-run')
+    expect(calls.count).toBe(0)
+  })
+
+  it('not_found when getVPS returns null', async () => {
+    const calls = { count: 0 }
+    await expect(cli.cmdDestroy(['hetzner', '99999', '--yes'], {
+      createProvider: mockProvWithVPS({ vps: null, destroyCalls: calls }),
+    })).rejects.toThrow(ExitError)
+    expect(JSON.parse(stderrLines.at(-1)!).code).toBe('not_found')
+    expect(calls.count).toBe(0)
+  })
+
+  it('rejects injection in id', async () => {
+    await expect(cli.cmdDestroy(['hetzner', '12345?force=1', '--yes'])).rejects.toThrow(ExitError)
+    expect(JSON.parse(stderrLines.at(-1)!).code).toBe('bad_arg')
+  })
+
+  it('no_token when env unset', async () => {
+    clearHetznerEnv()
+    await expect(cli.cmdDestroy(['hetzner', '12345', '--yes'])).rejects.toThrow(ExitError)
+    expect(JSON.parse(stderrLines.at(-1)!).code).toBe('no_token')
+  })
+
+  it('missing id arg returns missing_arg', async () => {
+    await expect(cli.cmdDestroy(['hetzner'])).rejects.toThrow(ExitError)
+    expect(JSON.parse(stderrLines.at(-1)!).code).toBe('missing_arg')
+  })
+})
+
 describe('main dispatch', () => {
   it('--help prints usage', async () => {
     await cli.main(['--help'])
