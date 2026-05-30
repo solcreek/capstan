@@ -13,6 +13,9 @@
 //     subcommand).
 
 import { parseArgs, type ParseArgsConfig } from 'node:util'
+import { readFileSync, readdirSync, existsSync, statSync } from 'node:fs'
+import { dirname, join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import {
   recommendPlacement,
   type Geography,
@@ -386,6 +389,12 @@ const SCHEMAS: Record<string, CommandSchema> = {
     outputKeys: ['ok', 'command', 'positional', 'flags', 'outputKeys', 'exitCodes'],
     exitCodes: { '0': 'success', '2': 'unknown command' },
   },
+  skill: {
+    positional: [{ name: 'name', required: false }],
+    flags: [{ name: '--text', type: 'boolean', description: 'no-op (skill output is already markdown text)' }],
+    outputKeys: ['ok', 'skills'],
+    exitCodes: { '0': 'success', '1': 'unknown skill', '2': 'bad arg' },
+  },
 }
 
 export function cmdDescribe(argv: string[]): void {
@@ -421,6 +430,73 @@ export function cmdDescribe(argv: string[]): void {
   )
 }
 
+// ─── `skill` — emit bundled agent skills ───────────────────────────
+//
+// Agents discovering capstan organically (via `npx capstan` after
+// finding the package on npm) get to its skill via the `skill` command;
+// the same SKILL.md file is also resolved by skills.sh when a user runs
+// `npx skills add solcreek/capstan`. One source of truth, two surfaces.
+
+// Locate the skills/ directory at runtime. The CLI lives in dist/cli.js
+// after build, so skills/ is two levels up. In dev (running from src/),
+// resolve relative to the source file instead.
+function skillsRoot(): string {
+  const here = dirname(fileURLToPath(import.meta.url))
+  // Try dist/cli.js -> repo/skills, then src/cli.ts -> repo/skills.
+  const distLevel = resolve(here, '..', 'skills')
+  const srcLevel = resolve(here, '..', '..', 'skills')
+  for (const c of [distLevel, srcLevel]) {
+    if (existsSync(c) && statSync(c).isDirectory()) return c
+  }
+  return distLevel
+}
+
+export function cmdSkill(argv: string[]): void {
+  const { values, positionals } = parseArgs({
+    args: argv,
+    options: commonOpts,
+    allowPositionals: true,
+    strict: false,
+  })
+  const root = skillsRoot()
+  const target = positionals[0]
+
+  if (!target) {
+    let skills: string[] = []
+    try {
+      skills = readdirSync(root, { withFileTypes: true })
+        .filter((d) => d.isDirectory())
+        .map((d) => d.name)
+        .sort()
+    } catch {
+      // No skills/ dir → empty list
+    }
+    emit(
+      { ok: true, skills },
+      (d) => (d.skills.length ? d.skills.join('\n') : '(no bundled skills)'),
+      optsOf(values),
+    )
+    return
+  }
+
+  checkSlug(target, 'skill name')
+  const skillPath = join(root, target, 'SKILL.md')
+  if (!existsSync(skillPath)) {
+    emitError(
+      `skill "${target}" not found in ${root}; run \`capstan skill\` for the list`,
+      'unknown_skill',
+      1,
+    )
+  }
+  const content = readFileSync(skillPath, 'utf8')
+
+  // Always print raw markdown — the format is meant for agent context
+  // injection. The --text flag is accepted but has no semantic
+  // difference here since the markdown IS the textual representation.
+  process.stdout.write(content)
+  if (!content.endsWith('\n')) process.stdout.write('\n')
+}
+
 // ─── Dispatch ──────────────────────────────────────────────────────
 
 const SUBCOMMANDS: Record<string, (argv: string[]) => void> = {
@@ -432,6 +508,7 @@ const SUBCOMMANDS: Record<string, (argv: string[]) => void> = {
   price: cmdPrice,
   recommend: cmdRecommend,
   describe: cmdDescribe,
+  skill: cmdSkill,
 }
 
 const HELP = `capstan — multi-provider VPS lookup CLI
@@ -447,7 +524,10 @@ OFFLINE COMMANDS (no token, instant)
   plans <provider>                         List plans (size + price) from spec
   price <provider> <plan>                  Single plan monthly price (cents)
   recommend --geo <g> [--workload] [--sla] Placement recommendation
+
+AGENT-FIRST FEATURES
   describe [command]                       Schema for a command (or list all)
+  skill [name]                             Emit a bundled agent skill (markdown)
 
 GLOBAL FLAGS
   --text          Human-readable output (default: JSON for agent use)

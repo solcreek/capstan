@@ -187,6 +187,34 @@ describe('input hardening', () => {
   })
 })
 
+describe('skill (bundled agent skill)', () => {
+  it('lists bundled skills when called with no arg', () => {
+    cli.cmdSkill([])
+    const out = lastJson()
+    expect(out.ok).toBe(true)
+    expect(Array.isArray(out.skills)).toBe(true)
+    expect(out.skills).toContain('capstan-overview')
+  })
+
+  it('emits markdown content for capstan-overview', () => {
+    cli.cmdSkill(['capstan-overview'])
+    const content = stdoutLines.join('')
+    expect(content).toContain('name: solcreek-capstan-overview')
+    expect(content).toContain('Capstan — Multi-Provider VPS CLI')
+  })
+
+  it('errors on unknown skill with stable code', () => {
+    expect(() => cli.cmdSkill(['nonexistent'])).toThrow(ExitError)
+    const err = JSON.parse(stderrLines.at(-1)!)
+    expect(err.code).toBe('unknown_skill')
+  })
+
+  it('rejects injection in skill name', () => {
+    expect(() => cli.cmdSkill(['capstan?evil=1'])).toThrow(ExitError)
+    expect(JSON.parse(stderrLines.at(-1)!).code).toBe('bad_arg')
+  })
+})
+
 describe('describe (schema introspection)', () => {
   it('lists all command names when called with no arg', () => {
     cli.cmdDescribe([])
