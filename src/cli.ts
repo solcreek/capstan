@@ -193,7 +193,12 @@ export function cmdGeographies(argv: string[]): void {
 export function cmdPlans(argv: string[]): void {
   const { values, positionals } = parseArgs({
     args: argv,
-    options: commonOpts,
+    options: {
+      text: { type: 'boolean' },
+      help: { type: 'boolean', short: 'h' },
+      ndjson: { type: 'boolean' },
+      fields: { type: 'string' },
+    },
     allowPositionals: true,
     strict: false,
   })
@@ -201,13 +206,57 @@ export function cmdPlans(argv: string[]): void {
   assertProvider(providerName)
 
   const spec = SPECS[providerName]
-  const plans = Object.entries(spec.priceCents)
-    .map(([id, cents]) => ({ id, priceMonthlyCents: cents, priceCurrency: spec.priceCurrency }))
-    .sort((a, b) => a.priceMonthlyCents - b.priceMonthlyCents)
+  let plans: Array<Record<string, unknown>> = Object.entries(spec.priceCents)
+    .map(([id, cents]) => ({
+      id,
+      priceMonthlyCents: cents,
+      priceCurrency: spec.priceCurrency,
+    }))
+    .sort(
+      (a, b) =>
+        (a.priceMonthlyCents as number) - (b.priceMonthlyCents as number),
+    )
+
+  // --fields a,b,c — narrow each plan object to only the requested keys.
+  // Cuts agent token usage when the caller only needs `id,priceMonthlyCents`.
+  if (typeof values.fields === 'string' && values.fields.length > 0) {
+    const requested = values.fields
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean)
+    for (const f of requested) checkSlug(f, '--fields entry')
+    const allowed = new Set(['id', 'priceMonthlyCents', 'priceCurrency'])
+    for (const f of requested) {
+      if (!allowed.has(f)) {
+        emitError(
+          `unknown field "${f}"; allowed: ${[...allowed].join(', ')}`,
+          'bad_arg',
+          2,
+        )
+      }
+    }
+    plans = plans.map((p) => {
+      const filtered: Record<string, unknown> = {}
+      for (const k of requested) filtered[k] = p[k]
+      return filtered
+    })
+  }
+
+  // --ndjson — emit one plan per line. Streamable, agent-friendly when
+  // the caller only needs to iterate; avoids buffering a top-level array
+  // into context. The `{ok, provider, currency}` envelope is dropped in
+  // ndjson mode — callers who need it should not pass --ndjson.
+  if (values.ndjson) {
+    for (const p of plans) process.stdout.write(JSON.stringify(p) + '\n')
+    return
+  }
 
   emit(
     { ok: true, provider: providerName, currency: spec.priceCurrency, plans },
-    (d) => d.plans.map((p) => `${p.id}\t${p.priceMonthlyCents} ${d.currency}`).join('\n'),
+    (d) =>
+      d.plans
+        .map((p) => `${p.id ?? ''}\t${p.priceMonthlyCents ?? ''} ${p.priceCurrency ?? d.currency}`)
+        .join('\n'),
     optsOf(values),
   )
 }
@@ -359,9 +408,13 @@ const SCHEMAS: Record<string, CommandSchema> = {
   },
   plans: {
     positional: [{ name: 'provider', required: true, values: PROVIDERS }],
-    flags: [{ name: '--text', type: 'boolean', description: 'human-readable output' }],
+    flags: [
+      { name: '--text', type: 'boolean', description: 'human-readable output' },
+      { name: '--ndjson', type: 'boolean', description: 'one plan per line; drops envelope' },
+      { name: '--fields', type: 'string', description: 'comma-separated subset of: id, priceMonthlyCents, priceCurrency' },
+    ],
     outputKeys: ['ok', 'provider', 'currency', 'plans'],
-    exitCodes: { '0': 'success', '2': 'missing or unknown provider' },
+    exitCodes: { '0': 'success', '2': 'missing or unknown provider; bad field name' },
   },
   price: {
     positional: [

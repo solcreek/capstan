@@ -95,6 +95,46 @@ describe('plans', () => {
   })
 })
 
+describe('plans --ndjson + --fields', () => {
+  it('--ndjson emits one JSON object per line, no envelope', () => {
+    cli.cmdPlans(['hetzner', '--ndjson'])
+    const lines = stdoutLines.join('').trim().split('\n')
+    expect(lines.length).toBeGreaterThan(20)
+    for (const line of lines) {
+      const obj = JSON.parse(line)
+      expect(obj.id).toBeTypeOf('string')
+      expect(obj.priceMonthlyCents).toBeTypeOf('number')
+    }
+  })
+
+  it('--fields narrows each plan to listed keys', () => {
+    cli.cmdPlans(['hetzner', '--fields', 'id,priceMonthlyCents'])
+    const out = lastJson()
+    expect(out.plans[0]).toHaveProperty('id')
+    expect(out.plans[0]).toHaveProperty('priceMonthlyCents')
+    expect(out.plans[0]).not.toHaveProperty('priceCurrency')
+  })
+
+  it('--ndjson + --fields combine', () => {
+    cli.cmdPlans(['hetzner', '--ndjson', '--fields', 'id'])
+    const lines = stdoutLines.join('').trim().split('\n')
+    for (const line of lines) {
+      const obj = JSON.parse(line)
+      expect(Object.keys(obj)).toEqual(['id'])
+    }
+  })
+
+  it('--fields rejects unknown field with bad_arg', () => {
+    expect(() => cli.cmdPlans(['hetzner', '--fields', 'id,bogus'])).toThrow(ExitError)
+    expect(JSON.parse(stderrLines.at(-1)!).code).toBe('bad_arg')
+  })
+
+  it('--fields rejects injection in field name', () => {
+    expect(() => cli.cmdPlans(['hetzner', '--fields', 'id?evil=1'])).toThrow(ExitError)
+    expect(JSON.parse(stderrLines.at(-1)!).code).toBe('bad_arg')
+  })
+})
+
 describe('price', () => {
   it('returns cx23 monthly price for hetzner', () => {
     cli.cmdPrice(['hetzner', 'cx23'])
