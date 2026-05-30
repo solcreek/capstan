@@ -343,7 +343,7 @@ describe('list (live VPS)', () => {
     })
     const lines = stdoutLines.join('').trim().split('\n')
     expect(lines).toHaveLength(2)
-    expect(JSON.parse(lines[0]).name).toBe('a')
+    expect(JSON.parse(lines[0]!).name).toBe('a')
   })
 
   it('emits no_token error when env is unset', async () => {
