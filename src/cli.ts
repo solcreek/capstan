@@ -448,6 +448,22 @@ const SCHEMAS: Record<string, CommandSchema> = {
     outputKeys: ['ok', 'skills'],
     exitCodes: { '0': 'success', '1': 'unknown skill', '2': 'bad arg' },
   },
+  list: {
+    positional: [{ name: 'provider', required: true, values: PROVIDERS }],
+    flags: [
+      { name: '--text', type: 'boolean', description: 'human-readable output' },
+      { name: '--ndjson', type: 'boolean', description: 'one VPS per line' },
+      { name: '--fields', type: 'string', description: 'comma-separated subset of VPS keys' },
+    ],
+    outputKeys: ['ok', 'provider', 'vpses'],
+    exitCodes: { '0': 'success', '1': 'auth or network failure', '2': 'bad args or no token' },
+  },
+  drift: {
+    positional: [{ name: 'provider', required: true, values: PROVIDERS }],
+    flags: [{ name: '--text', type: 'boolean', description: 'human-readable output' }],
+    outputKeys: ['ok', 'provider', 'inSync', 'onlyInSpec', 'onlyInAPI', 'hasDrift'],
+    exitCodes: { '0': 'no drift', '1': 'drift detected (or network/auth failure)', '2': 'no token; for public-catalog providers, use Go binary capstan-spec-check' },
+  },
 }
 
 export function cmdDescribe(argv: string[]): void {
@@ -481,6 +497,168 @@ export function cmdDescribe(argv: string[]): void {
     (d) => JSON.stringify(d, null, 2),
     optsOf(values),
   )
+}
+
+// ─── Token resolution for live commands ───────────────────────────
+
+export function resolveToken(provider: ProviderName): { token: string; source: string } {
+  for (const name of TOKEN_ALIASES[provider]) {
+    const v = process.env[name]
+    if (v) return { token: v, source: name }
+  }
+  return { token: '', source: TOKEN_ALIASES[provider].join(' or ') }
+}
+
+// ─── `list <provider>` — live VPS list ─────────────────────────────
+
+export async function cmdList(argv: string[], deps: LiveDeps = {}): Promise<void> {
+  const { values, positionals } = parseArgs({
+    args: argv,
+    options: {
+      text: { type: 'boolean' },
+      help: { type: 'boolean', short: 'h' },
+      ndjson: { type: 'boolean' },
+      fields: { type: 'string' },
+    },
+    allowPositionals: true,
+    strict: false,
+  })
+  const providerName = positionals[0]
+  assertProvider(providerName)
+
+  const { token, source } = resolveToken(providerName)
+  if (!token) {
+    emitError(
+      `no token in env for ${providerName} (set ${source})`,
+      'no_token',
+      2,
+    )
+  }
+
+  const make = deps.createProvider ?? createProvider
+  const p = make(providerName, { token, fetchImpl: deps.fetchImpl })
+
+  let vpses
+  try {
+    vpses = await p.listVPS()
+  } catch (err) {
+    const e = err as { code?: string; message?: string; status?: number }
+    emitError(
+      e.message ?? String(err),
+      e.code === 'unauthorized' ? 'auth' : 'network',
+      1,
+    )
+  }
+
+  let items: Array<Record<string, unknown>> = vpses.map((v) => ({ ...v }))
+
+  if (typeof values.fields === 'string' && values.fields.length > 0) {
+    const requested = values.fields
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean)
+    for (const f of requested) checkSlug(f, '--fields entry')
+    items = items.map((item) => {
+      const filtered: Record<string, unknown> = {}
+      for (const k of requested) filtered[k] = item[k]
+      return filtered
+    })
+  }
+
+  if (values.ndjson) {
+    for (const v of items) process.stdout.write(JSON.stringify(v) + '\n')
+    return
+  }
+
+  emit(
+    { ok: true, provider: providerName, vpses: items },
+    (d) =>
+      d.vpses
+        .map((v) => `${v.id ?? ''}\t${v.name ?? ''}\t${v.status ?? ''}\t${v.publicIPv4 ?? ''}`)
+        .join('\n'),
+    optsOf(values),
+  )
+}
+
+// ─── `drift <provider>` — live spec drift ──────────────────────────
+
+export async function cmdDrift(argv: string[], deps: LiveDeps = {}): Promise<void> {
+  const { values, positionals } = parseArgs({
+    args: argv,
+    options: commonOpts,
+    allowPositionals: true,
+    strict: false,
+  })
+  const providerName = positionals[0]
+  assertProvider(providerName)
+
+  const { token, source } = resolveToken(providerName)
+  if (!token) {
+    emitError(
+      `no token in env for ${providerName} (set ${source}); for Linode/Vultr public catalog drift, run \`capstan-spec-check --provider ${providerName}\` (Go binary)`,
+      'no_token',
+      2,
+    )
+  }
+
+  const make = deps.createProvider ?? createProvider
+  const p = make(providerName, { token, fetchImpl: deps.fetchImpl })
+
+  let sizes
+  try {
+    sizes = await p.listSizes()
+  } catch (err) {
+    const e = err as { code?: string; message?: string }
+    emitError(e.message ?? String(err), e.code === 'unauthorized' ? 'auth' : 'network', 1)
+  }
+
+  const apiIds = new Set(sizes.map((s) => s.id))
+  const spec = SPECS[providerName]
+  const onlyInSpec: Array<{ id: string; priceMonthlyCents: number }> = []
+  const onlyInAPI: string[] = []
+  let inSync = 0
+  for (const [id, cents] of Object.entries(spec.priceCents)) {
+    if (apiIds.has(id)) inSync++
+    else onlyInSpec.push({ id, priceMonthlyCents: cents })
+  }
+  for (const id of apiIds) {
+    if (!(id in spec.priceCents)) onlyInAPI.push(id)
+  }
+  onlyInSpec.sort((a, b) => a.id.localeCompare(b.id))
+  onlyInAPI.sort()
+
+  const hasDrift = onlyInSpec.length > 0 || onlyInAPI.length > 0
+
+  emit(
+    {
+      ok: true,
+      provider: providerName,
+      inSync,
+      onlyInSpec,
+      onlyInAPI,
+      hasDrift,
+    },
+    (d) =>
+      [
+        `in sync: ${d.inSync}`,
+        d.onlyInSpec.length
+          ? `deprecated (in spec, not in API):\n  ${d.onlyInSpec.map((x) => x.id).join('\n  ')}`
+          : '',
+        d.onlyInAPI.length
+          ? `new (in API, not in spec):\n  ${d.onlyInAPI.join('\n  ')}`
+          : '',
+      ]
+        .filter(Boolean)
+        .join('\n'),
+    optsOf(values),
+  )
+
+  if (hasDrift) process.exit(1)
+}
+
+interface LiveDeps {
+  fetchImpl?: typeof fetch
+  createProvider?: typeof createProvider
 }
 
 // ─── `skill` — emit bundled agent skills ───────────────────────────
@@ -552,7 +730,7 @@ export function cmdSkill(argv: string[]): void {
 
 // ─── Dispatch ──────────────────────────────────────────────────────
 
-const SUBCOMMANDS: Record<string, (argv: string[]) => void> = {
+const SUBCOMMANDS: Record<string, (argv: string[]) => void | Promise<void>> = {
   providers: cmdProviders,
   workloads: cmdWorkloads,
   'sla-tiers': cmdSlaTiers,
@@ -562,6 +740,8 @@ const SUBCOMMANDS: Record<string, (argv: string[]) => void> = {
   recommend: cmdRecommend,
   describe: cmdDescribe,
   skill: cmdSkill,
+  list: (argv) => cmdList(argv),
+  drift: (argv) => cmdDrift(argv),
 }
 
 const HELP = `capstan — multi-provider VPS lookup CLI
@@ -582,6 +762,10 @@ AGENT-FIRST FEATURES
   describe [command]                       Schema for a command (or list all)
   skill [name]                             Emit a bundled agent skill (markdown)
 
+LIVE COMMANDS (need token)
+  list <provider>                          List current VPSes for the account
+  drift <provider>                         Live spec drift vs provider API
+
 GLOBAL FLAGS
   --text          Human-readable output (default: JSON for agent use)
   -h, --help      Show this help
@@ -595,7 +779,7 @@ Token aliases (when a future live command needs auth):
   vultr         VULTR_API_KEY | VULTR_TOKEN
 `
 
-export function main(argv: string[]): void {
+export async function main(argv: string[]): Promise<void> {
   const [sub, ...rest] = argv
 
   if (!sub || sub === '--help' || sub === '-h') {
@@ -619,15 +803,14 @@ export function main(argv: string[]): void {
       2,
     )
   }
-  handler(rest)
+  await handler(rest)
 }
 
 // Reference touched so tsc doesn't strip the import in CLI-only builds.
 void listImplementedProviders
-void createProvider
 void postureSpec
 
 // Run main when invoked directly (not when imported by tests).
 if (import.meta.url === `file://${process.argv[1]}`) {
-  main(process.argv.slice(2))
+  void main(process.argv.slice(2))
 }

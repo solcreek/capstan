@@ -293,30 +293,136 @@ describe('describe (schema introspection)', () => {
   })
 })
 
+// Mock provider that bypasses the HTTP layer — list/drift tests verify
+// the CLI's contract (token resolution, output shape, drift logic),
+// not Hetzner's response parsing which has its own test suite.
+function mockProviderFactory(impls: { listVPS?: () => Promise<unknown[]>; listSizes?: () => Promise<unknown[]> }) {
+  return (() => ({
+    name: 'hetzner',
+    listVPS: impls.listVPS ?? (async () => []),
+    listSizes: impls.listSizes ?? (async () => []),
+  })) as unknown as Parameters<typeof cli.cmdList>[1] extends { createProvider?: infer F } ? F : never
+}
+
+// Hetzner token aliases — user envs typically have HETZNER_API_TOKEN set;
+// for "no token" tests, we have to clear every alias, not just HCLOUD_TOKEN.
+const HETZNER_ENV_KEYS = ['HCLOUD_TOKEN', 'HETZNER_API_TOKEN', 'HETZNER_TOKEN']
+function clearHetznerEnv() {
+  for (const k of HETZNER_ENV_KEYS) delete process.env[k]
+}
+function setHetznerEnv(value: string) {
+  clearHetznerEnv()
+  process.env.HCLOUD_TOKEN = value
+}
+
+describe('list (live VPS)', () => {
+  beforeEach(() => { setHetznerEnv('test-token-for-list') })
+  afterEach(() => { clearHetznerEnv() })
+
+  it('emits VPSes from listVPS', async () => {
+    await cli.cmdList(['hetzner'], {
+      createProvider: mockProviderFactory({
+        listVPS: async () => [{ id: '1', name: 'web', status: 'running', publicIPv4: '1.2.3.4' }],
+      }),
+    })
+    const out = lastJson()
+    expect(out.ok).toBe(true)
+    expect(out.provider).toBe('hetzner')
+    expect(out.vpses).toHaveLength(1)
+    expect(out.vpses[0].name).toBe('web')
+  })
+
+  it('--ndjson streams one VPS per line', async () => {
+    await cli.cmdList(['hetzner', '--ndjson'], {
+      createProvider: mockProviderFactory({
+        listVPS: async () => [
+          { id: '1', name: 'a', status: 'running' },
+          { id: '2', name: 'b', status: 'off' },
+        ],
+      }),
+    })
+    const lines = stdoutLines.join('').trim().split('\n')
+    expect(lines).toHaveLength(2)
+    expect(JSON.parse(lines[0]).name).toBe('a')
+  })
+
+  it('emits no_token error when env is unset', async () => {
+    clearHetznerEnv()
+    await expect(cli.cmdList(['hetzner'])).rejects.toThrow(ExitError)
+    expect(JSON.parse(stderrLines.at(-1)!).code).toBe('no_token')
+  })
+
+  it('rejects bad provider arg even before checking token', async () => {
+    await expect(cli.cmdList(['nonexistent'])).rejects.toThrow(ExitError)
+    expect(JSON.parse(stderrLines.at(-1)!).code).toBe('unknown_provider')
+  })
+})
+
+describe('drift (live spec drift)', () => {
+  beforeEach(() => { setHetznerEnv('test-token-for-drift') })
+  afterEach(() => { clearHetznerEnv() })
+
+  it('reports no drift when API matches spec', async () => {
+    const specIds = ['cx23', 'cx33', 'cx43', 'cx53', 'cax11', 'cax21', 'cax31', 'cax41',
+      'cpx11', 'cpx12', 'cpx21', 'cpx22', 'cpx31', 'cpx32', 'cpx41', 'cpx42',
+      'cpx51', 'cpx52', 'cpx62', 'ccx13', 'ccx23', 'ccx33', 'ccx43', 'ccx53', 'ccx63']
+    await cli.cmdDrift(['hetzner'], {
+      createProvider: mockProviderFactory({
+        listSizes: async () => specIds.map((id) => ({ id })),
+      }),
+    })
+    const out = lastJson()
+    expect(out.ok).toBe(true)
+    expect(out.hasDrift).toBe(false)
+    expect(out.inSync).toBeGreaterThan(20)
+  })
+
+  it('reports drift when API has new types and missing ones', async () => {
+    // Mock returns a stripped-down catalog (missing many) plus one new type
+    await cli.cmdDrift(['hetzner'], {
+      createProvider: mockProviderFactory({
+        listSizes: async () => [{ id: 'cx23' }, { id: 'cx99-new' }],
+      }),
+    }).catch(() => {/* exit(1) on drift is expected */})
+    const out = lastJson()
+    expect(out.hasDrift).toBe(true)
+    expect(out.onlyInSpec.length).toBeGreaterThan(0)
+    expect(out.onlyInAPI).toContain('cx99-new')
+  })
+
+  it('emits no_token error when env is unset', async () => {
+    clearHetznerEnv()
+    await expect(cli.cmdDrift(['hetzner'])).rejects.toThrow(ExitError)
+    const err = JSON.parse(stderrLines.at(-1)!)
+    expect(err.code).toBe('no_token')
+    expect(err.error).toContain('capstan-spec-check')
+  })
+})
+
 describe('main dispatch', () => {
-  it('--help prints usage', () => {
-    cli.main(['--help'])
+  it('--help prints usage', async () => {
+    await cli.main(['--help'])
     expect(stdoutLines.join('')).toContain('USAGE')
   })
 
-  it('no args prints usage', () => {
-    cli.main([])
+  it('no args prints usage', async () => {
+    await cli.main([])
     expect(stdoutLines.join('')).toContain('capstan')
   })
 
-  it('--version prints package version', () => {
-    cli.main(['--version'])
+  it('--version prints package version', async () => {
+    await cli.main(['--version'])
     expect(lastJson().name).toBe('capstan')
   })
 
-  it('unknown subcommand errors with stable code', () => {
-    expect(() => cli.main(['nonexistent'])).toThrow(ExitError)
+  it('unknown subcommand errors with stable code', async () => {
+    await expect(cli.main(['nonexistent'])).rejects.toThrow(ExitError)
     const err = JSON.parse(stderrLines.at(-1)!)
     expect(err.code).toBe('unknown_subcommand')
   })
 
-  it('routes "providers" to cmdProviders', () => {
-    cli.main(['providers'])
+  it('routes "providers" to cmdProviders', async () => {
+    await cli.main(['providers'])
     expect(lastJson().providers).toHaveLength(4)
   })
 })
