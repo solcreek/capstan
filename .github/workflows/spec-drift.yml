@@ -63,23 +63,23 @@ jobs:
           # live API has changes; idempotent when in sync.
           go run ./cmd/capstan-spec-check \
             --provider ${{ matrix.provider }} \
-            --apply > summary.md 2> apply.log
+            --apply > "$RUNNER_TEMP/summary.md" 2> "$RUNNER_TEMP/apply.log"
           status=$?
 
           echo "── apply log ──"
-          cat apply.log
+          cat "$RUNNER_TEMP/apply.log"
           echo ""
           echo "── summary ──"
-          cat summary.md
+          cat "$RUNNER_TEMP/summary.md"
 
           {
             echo "## ${{ matrix.provider }}"
-            cat summary.md
+            cat "$RUNNER_TEMP/summary.md"
             echo ""
             echo "<details><summary>Apply log</summary>"
             echo ""
             echo '```'
-            cat apply.log
+            cat "$RUNNER_TEMP/apply.log"
             echo '```'
             echo "</details>"
           } >> "$GITHUB_STEP_SUMMARY"
@@ -89,7 +89,7 @@ jobs:
           # configured — soft-skip rather than fail the matrix entry.
           # Match on the log message, not exit code: go run collapses
           # any non-zero exit to 1, which would mask the tool's exit 2.
-          if grep -q "no token in env" apply.log; then
+          if grep -q "no token in env" "$RUNNER_TEMP/apply.log"; then
             echo "::warning::No token for ${{ matrix.provider }} — set HCLOUD_TOKEN or DO_API_KEY repo/org secret to enable"
             echo "skipped=true" >> "$GITHUB_OUTPUT"
             exit 0
@@ -102,7 +102,7 @@ jobs:
           # Capture summary for the PR body in a later step.
           {
             echo 'summary<<EOF'
-            cat summary.md
+            cat "$RUNNER_TEMP/summary.md"
             echo 'EOF'
           } >> "$GITHUB_OUTPUT"
 
