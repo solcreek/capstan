@@ -1,17 +1,21 @@
 name: spec-drift
 
-# Compares each provider's embedded spec (specs/<provider>.json) against the
-# live catalog API and reports drift via the action summary.
+# Refreshes each provider's embedded spec (specs/<provider>.json) from
+# the live catalog API and opens a PR with the diff for human review.
 #
-# Linode and Vultr catalog endpoints are public — those run with no secret.
-# Hetzner and DigitalOcean require Bearer auth; when the secret is unset, the
-# job soft-skips (logs a warning, returns success) so this workflow stays
-# useful even on forks and in repos without secret config.
+# Linode + Vultr catalog endpoints are public — those run with no
+# secret. Hetzner + DigitalOcean require Bearer auth; when the secret
+# is unset, the job soft-skips (logs a warning, returns success).
+#
+# Why PR-not-auto-commit: pricing changes have downstream consequences
+# (Dew's provisioning cost estimates, customer-facing pricing pages),
+# so a human eyeballs the diff. The PR action only opens / updates the
+# PR when there's an actual diff — quiet weeks make no noise.
 
 on:
   schedule:
-    - cron: '0 6 * * 1'   # Mondays 06:00 UTC — weekly drift report
-  workflow_dispatch:        # manual trigger from the Actions tab
+    - cron: '0 6 * * 1'   # Mondays 06:00 UTC — weekly refresh
+  workflow_dispatch:
   push:
     branches: [main]
     paths:
@@ -25,14 +29,15 @@ on:
       - '.github/workflows/spec-drift.yml'
 
 permissions:
-  contents: read
+  contents: write       # commit refreshed spec to a branch
+  pull-requests: write  # open / update the PR
 
 jobs:
-  check:
+  refresh:
     name: ${{ matrix.provider }}
     runs-on: ubuntu-24.04
     strategy:
-      fail-fast: false   # drift in one provider shouldn't mask drift in another
+      fail-fast: false   # one provider's drift shouldn't mask another
       matrix:
         provider: [hetzner, digitalocean, linode, vultr]
     steps:
@@ -42,51 +47,88 @@ jobs:
         with:
           go-version: '1.23'
           # No `cache: true` — capstan is pure stdlib (no go.sum),
-          # nothing to cache. Setting it just emits a "deps file not
-          # found" warning on every run.
+          # nothing to cache.
 
-      - name: spec-check ${{ matrix.provider }}
+      - name: Refresh ${{ matrix.provider }} spec from live API
+        id: refresh
         env:
-          # Required for hetzner / digitalocean. Empty for linode / vultr
-          # (their catalog endpoints don't need auth). Set these as repo or
-          # org secrets to enable drift detection for the auth'd providers.
           HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
           DO_API_KEY: ${{ secrets.DO_API_KEY }}
         run: |
           set +e
-          go run ./cmd/capstan-spec-check --provider ${{ matrix.provider }} > drift.md 2>&1
+          # Run apply mode. Tool writes specs/<provider>.json when the
+          # live API has changes; idempotent when in sync.
+          go run ./cmd/capstan-spec-check \
+            --provider ${{ matrix.provider }} \
+            --apply > summary.md 2> apply.log
           status=$?
 
-          cat drift.md
+          echo "── apply log ──"
+          cat apply.log
+          echo ""
+          echo "── summary ──"
+          cat summary.md
 
           {
             echo "## ${{ matrix.provider }}"
-            cat drift.md
+            cat summary.md
             echo ""
+            echo "<details><summary>Apply log</summary>"
+            echo ""
+            echo '```'
+            cat apply.log
+            echo '```'
+            echo "</details>"
           } >> "$GITHUB_STEP_SUMMARY"
 
           # Tool exit 2 == "no token in env". For providers whose catalog
           # endpoint needs auth (hetzner, digitalocean), this means the
-          # corresponding secret isn't configured — soft-skip rather than
-          # fail the matrix entry.
-          if [ $status -eq 2 ]; then
+          # corresponding secret isn't configured — soft-skip rather
+          # than fail the matrix entry.
+          if [ $status -eq 2 ] && grep -q "no token in env" apply.log; then
             echo "::warning::No token for ${{ matrix.provider }} — set HCLOUD_TOKEN or DO_API_KEY repo/org secret to enable"
+            echo "skipped=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
+          if [ $status -ne 0 ]; then
+            echo "::error::Spec apply failed for ${{ matrix.provider }} (exit $status)"
+            exit $status
+          fi
 
-          # Drift is informational on schedule + manual dispatch — both
-          # are "show me the current state" triggers, not gates. Failing
-          # every week on the same ambient drift trains us to ignore the
-          # red badge; failing on dispatch makes the verify-the-CI muscle
-          # impossible. PR and push to main get hard fail so a spec change
-          # that doesn't match the live API can't merge silently.
-          case "${{ github.event_name }}" in
-            schedule|workflow_dispatch)
-              if [ $status -eq 1 ]; then
-                echo "::warning::Drift detected for ${{ matrix.provider }}; see job summary"
-              fi
-              exit 0
-              ;;
-          esac
+          # Capture summary for the PR body in a later step.
+          {
+            echo 'summary<<EOF'
+            cat summary.md
+            echo 'EOF'
+          } >> "$GITHUB_OUTPUT"
 
-          exit $status
+      - name: Open PR if spec changed
+        if: steps.refresh.outputs.skipped != 'true'
+        uses: peter-evans/create-pull-request@v7
+        with:
+          # Stable per-provider branch so weekly runs update the same
+          # PR rather than spawning a new one. Closing the PR resets;
+          # the next run re-opens it.
+          branch: bot/spec-drift-${{ matrix.provider }}
+          base: main
+          commit-message: |
+            chore(specs): refresh ${{ matrix.provider }} from live API
+
+            Auto-generated by .github/workflows/spec-drift.yml from the
+            live catalog API. Review the priceCents diff before merging.
+          title: "chore(specs): refresh ${{ matrix.provider }} from live API"
+          body: |
+            Refreshes `specs/${{ matrix.provider }}.json` priceCents from
+            the live ${{ matrix.provider }} catalog API.
+
+            Review the diff: a sane price change is a small percentage
+            move on existing SKUs and additions/removals matching the
+            provider's recent announcements. Wildly different numbers
+            (e.g. uniform 0, 10x jumps) suggest an API regression
+            rather than real pricing — investigate before merging.
+
+            ${{ steps.refresh.outputs.summary }}
+          labels: |
+            spec-drift
+            automated
+          delete-branch: false   # keep branch around for the next week
