@@ -16,17 +16,18 @@ on:
   schedule:
     - cron: '0 6 * * 1'   # Mondays 06:00 UTC — weekly refresh
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths:
-      - 'specs/**'
-      - 'cmd/capstan-spec-check/**'
   pull_request:
     branches: [main]
     paths:
       - 'specs/**'
       - 'cmd/capstan-spec-check/**'
       - '.github/workflows/spec-drift.yml'
+
+# Schedule + dispatch can otherwise race on the bot/spec-drift-<provider>
+# branch push. PRs run in their own context so they don't conflict.
+concurrency:
+  group: spec-drift-${{ github.workflow }}
+  cancel-in-progress: false
 
 permissions:
   contents: write       # commit refreshed spec to a branch
@@ -46,8 +47,10 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.23'
-          # No `cache: true` — capstan is pure stdlib (no go.sum),
-          # nothing to cache.
+          # setup-go enables module caching by default; capstan is pure
+          # stdlib (no go.sum), so caching is moot AND emits a "deps
+          # file not found" warning every run. Explicit false silences it.
+          cache: false
 
       - name: Refresh ${{ matrix.provider }} spec from live API
         id: refresh
