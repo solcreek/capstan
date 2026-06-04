@@ -17,12 +17,12 @@ on:
     paths:
       - 'specs/**'
       - 'cmd/capstan-spec-check/**'
-      - '.github/workflows/spec-drift.yml'
   pull_request:
     branches: [main]
     paths:
       - 'specs/**'
       - 'cmd/capstan-spec-check/**'
+      - '.github/workflows/spec-drift.yml'
 
 permissions:
   contents: read
