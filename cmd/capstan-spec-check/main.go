@@ -1,5 +1,6 @@
 // capstan-spec-check — compares the embedded provider spec against the
-// live provider catalog API and reports drift.
+// live provider catalog API and reports drift, optionally writing the
+// updated spec back to disk for a PR.
 //
 // Catches the kind of staleness that bit us in the wild on 2026-05-29:
 // specs/hetzner.json carried `cx22` in priceCents, but Hetzner's API
@@ -10,23 +11,27 @@
 //   - entries in the live API that aren't in spec.priceCents (new types
 //     — need a spec entry with current pricing)
 //
-// Exit codes:
-//   0 — spec is in sync with API
-//   1 — drift detected (output describes what changed)
-//   2 — error (auth, network, parsing)
+// With --apply, the tool rewrites specs/<provider>.json so priceCents
+// reflects the live catalog API (slugs + prices both refreshed). All
+// other fields are preserved. The weekly CI runs in this mode and
+// opens a PR with the diff for human review.
 //
-// Designed to be CI-friendly: run weekly, file an issue / open a PR with
-// the diff when exit != 0.
+// Exit codes:
+//   0 — spec is in sync (or --apply succeeded, possibly with changes)
+//   1 — drift detected (read-only mode only)
+//   2 — error (auth, network, parsing, write)
 
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -103,6 +108,8 @@ func main() {
 		providerFlag = flag.String("provider", "hetzner", "provider: hetzner|digitalocean|linode|vultr")
 		jsonOut      = flag.Bool("json", false, "emit JSON to stdout instead of Markdown")
 		timeoutSec   = flag.Int("timeout", 30, "API call timeout in seconds")
+		apply        = flag.Bool("apply", false, "rewrite specs/<provider>.json from live API instead of reporting drift")
+		specsDir     = flag.String("specs-dir", "specs", "directory holding <provider>.json files (used with --apply)")
 	)
 	flag.Parse()
 
@@ -146,9 +153,109 @@ func main() {
 		printMarkdown(os.Stdout, d)
 	}
 
+	if *apply {
+		path := filepath.Join(*specsDir, string(pName)+".json")
+		changed, err := applySpec(path, spec, plans)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "capstan-spec-check: apply: %v\n", err)
+			os.Exit(2)
+		}
+		if changed {
+			fmt.Fprintf(os.Stderr, "capstan-spec-check: wrote %s\n", path)
+		} else {
+			fmt.Fprintf(os.Stderr, "capstan-spec-check: %s already in sync\n", path)
+		}
+		return
+	}
+
 	if d.hasDrift() {
 		os.Exit(1)
 	}
+}
+
+// specWriteShape mirrors ProviderSpec's field order for stable
+// top-level layout, but uses json.RawMessage for non-price maps so
+// the human-curated key order in those fields survives the round-trip.
+// Without this, every --apply run would reshuffle statusMap into
+// alphabetical and the PR diff would be unreadable noise unrelated
+// to actual price changes.
+//
+// If ProviderSpec gains new fields they need adding here too —
+// silently dropped otherwise. Small tax for diff cleanliness.
+type specWriteShape struct {
+	Name             string          `json:"name"`
+	DisplayName      string          `json:"displayName"`
+	BaseURL          string          `json:"baseUrl"`
+	DefaultImage     string          `json:"defaultImage"`
+	UserDataEncoding string          `json:"userDataEncoding"`
+	StatusMap        json.RawMessage `json:"statusMap"`
+	PriceCents       map[string]int  `json:"priceCents"`
+	PriceCurrency    string          `json:"priceCurrency"`
+}
+
+// applySpec rewrites the on-disk spec at path with priceCents rebuilt
+// from the live API plans. Returns true if the file actually changed —
+// the caller (or CI / PR action) uses that signal to decide whether
+// there's a PR worth opening.
+func applySpec(path string, spec *capstan.ProviderSpec, plans []capstan.Plan) (bool, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return false, fmt.Errorf("read %s: %w", path, err)
+	}
+
+	// Decode into specWriteShape so statusMap stays as the raw bytes
+	// from the source file — only priceCents gets replaced.
+	var current specWriteShape
+	if err := json.Unmarshal(raw, &current); err != nil {
+		return false, fmt.Errorf("parse %s: %w", path, err)
+	}
+
+	newPrices := make(map[string]int, len(plans))
+	skippedMissingPrice := []string{}
+	for _, pl := range plans {
+		if pl.APIMonthlyCents <= 0 {
+			// API didn't report a price (e.g. Vultr's free tier). Skip
+			// rather than persist 0 — 0 in spec means "unknown" to
+			// downstream consumers, and that's exactly the right value
+			// here. We log so the PR body can explain the gap.
+			skippedMissingPrice = append(skippedMissingPrice, pl.ID)
+			continue
+		}
+		newPrices[pl.ID] = pl.APIMonthlyCents
+	}
+	current.PriceCents = newPrices
+
+	out, err := marshalSpec(&current)
+	if err != nil {
+		return false, fmt.Errorf("marshal %s: %w", path, err)
+	}
+
+	if bytes.Equal(bytes.TrimRight(raw, "\n"), bytes.TrimRight(out, "\n")) {
+		return false, nil
+	}
+	if err := os.WriteFile(path, out, 0644); err != nil {
+		return false, fmt.Errorf("write %s: %w", path, err)
+	}
+	if len(skippedMissingPrice) > 0 {
+		sort.Strings(skippedMissingPrice)
+		fmt.Fprintf(os.Stderr, "capstan-spec-check: skipped %d SKUs without API price: %s\n",
+			len(skippedMissingPrice), strings.Join(skippedMissingPrice, ", "))
+	}
+	return true, nil
+}
+
+// marshalSpec serializes a spec with the same shape git already tracks
+// (2-space indent, trailing newline) so the diff a reviewer sees is
+// purely the priceCents delta, not whitespace churn.
+func marshalSpec(s *specWriteShape) ([]byte, error) {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetIndent("", "  ")
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(s); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
 }
 
 func computeDrift(provider string, plans []capstan.Plan, spec *capstan.ProviderSpec) drift {

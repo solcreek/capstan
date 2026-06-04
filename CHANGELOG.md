@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased
+
+### Plan.APIMonthlyCents + spec-check auto-PR
+
+`Plan` gains an `APIMonthlyCents int` field carrying the live price as
+returned by the provider's catalog API at fetch time. `MonthlyCents`
+keeps its current meaning (curated spec snapshot). All four providers
+populate both. Library consumers that want a runtime sanity check can
+compare the two.
+
+`capstan-spec-check --apply` rewrites `specs/<provider>.json` with
+priceCents rebuilt from the live API. `statusMap` and other curated
+fields are preserved verbatim so the diff is the price delta alone.
+
+The weekly `spec-drift` workflow now runs in apply mode and opens a
+PR per provider (stable `bot/spec-drift-<provider>` branch). The PR
+only opens when there's an actual diff — quiet weeks stay quiet.
+
 ## v0.5.0 — Server List + power actions, factory, bench + spec-check tools, Hetzner spec sync (Go)
 
 The v0.5 cycle is Go-only. The TypeScript `Provider` interface stays at
