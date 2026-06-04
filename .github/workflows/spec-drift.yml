@@ -41,7 +41,9 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.23'
-          cache: true
+          # No `cache: true` — capstan is pure stdlib (no go.sum),
+          # nothing to cache. Setting it just emits a "deps file not
+          # found" warning on every run.
 
       - name: spec-check ${{ matrix.provider }}
         env:
@@ -72,15 +74,19 @@ jobs:
             exit 0
           fi
 
-          # Weekly schedule: drift is informational. The summary is the
-          # signal; failing every week on the same drift trains us to ignore
-          # the red badge. PR and push events get hard fail so broken specs
-          # can't merge silently.
-          if [ "${{ github.event_name }}" = "schedule" ]; then
-            if [ $status -eq 1 ]; then
-              echo "::warning::Drift detected for ${{ matrix.provider }}; see job summary"
-            fi
-            exit 0
-          fi
+          # Drift is informational on schedule + manual dispatch — both
+          # are "show me the current state" triggers, not gates. Failing
+          # every week on the same ambient drift trains us to ignore the
+          # red badge; failing on dispatch makes the verify-the-CI muscle
+          # impossible. PR and push to main get hard fail so a spec change
+          # that doesn't match the live API can't merge silently.
+          case "${{ github.event_name }}" in
+            schedule|workflow_dispatch)
+              if [ $status -eq 1 ]; then
+                echo "::warning::Drift detected for ${{ matrix.provider }}; see job summary"
+              fi
+              exit 0
+              ;;
+          esac
 
           exit $status
