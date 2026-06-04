@@ -3,6 +3,7 @@ package capstan
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"time"
 )
 
@@ -86,14 +87,26 @@ func (h *HetznerProvider) Plans(ctx context.Context, region string) ([]Plan, err
 				continue
 			}
 		}
+		// Hetzner publishes a price per location; the spec carries a
+		// single representative number, so pick the first location's
+		// gross price. Matches the historical convention the spec
+		// author used (Falkenstein is first in API ordering).
+		var apiCents int
+		if len(t.Prices) > 0 {
+			f, err := strconv.ParseFloat(t.Prices[0].PriceMonthly.Gross, 64)
+			if err == nil {
+				apiCents = dollarsToCents(f)
+			}
+		}
 		plans = append(plans, Plan{
-			ID:            t.Name,
-			Name:          t.Description,
-			CPUs:          t.Cores,
-			MemoryMB:      t.Memory * 1024,
-			DiskGB:        t.Disk,
-			MonthlyCents:  h.spec.EstimateMonthlyCost(t.Name),
-			PriceCurrency: h.spec.PriceCurrency,
+			ID:              t.Name,
+			Name:            t.Description,
+			CPUs:            t.Cores,
+			MemoryMB:        t.Memory * 1024,
+			DiskGB:          t.Disk,
+			MonthlyCents:    h.spec.EstimateMonthlyCost(t.Name),
+			PriceCurrency:   h.spec.PriceCurrency,
+			APIMonthlyCents: apiCents,
 		})
 	}
 	return plans, nil

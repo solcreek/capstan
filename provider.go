@@ -92,13 +92,19 @@ type Region struct {
 }
 
 type Plan struct {
-	ID              string `json:"id"`
-	Name            string `json:"name"`
-	CPUs            int    `json:"cpus"`
-	MemoryMB        int    `json:"memoryMb"`
-	DiskGB          int    `json:"diskGb"`
-	MonthlyCents    int    `json:"monthlyCents"`
-	PriceCurrency   string `json:"priceCurrency"`
+	ID            string `json:"id"`
+	Name          string `json:"name"`
+	CPUs          int    `json:"cpus"`
+	MemoryMB      int    `json:"memoryMb"`
+	DiskGB        int    `json:"diskGb"`
+	MonthlyCents  int    `json:"monthlyCents"`
+	PriceCurrency string `json:"priceCurrency"`
+	// APIMonthlyCents is the live price as returned by the provider's
+	// catalog API at fetch time. MonthlyCents is the curated spec
+	// snapshot — most library consumers should keep using that for
+	// stable estimates. Tools that update the spec, or want to flag
+	// drift at runtime, read APIMonthlyCents.
+	APIMonthlyCents int `json:"apiMonthlyCents,omitempty"`
 }
 
 type CreateOpts struct {
@@ -128,6 +134,17 @@ type Server struct {
 	Region     string       `json:"region"`
 	Plan       string       `json:"plan"`
 	CreatedAt  string       `json:"createdAt"`
+}
+
+// dollarsToCents converts a USD/EUR float price to integer cents.
+// Rounds rather than truncates so $5.00 doesn't land on 499 from a
+// 4.999999 float artifact. Provider catalog APIs all report price as
+// a float; the spec stores cents to avoid downstream float math.
+func dollarsToCents(d float64) int {
+	if d <= 0 {
+		return 0
+	}
+	return int(d*100 + 0.5)
 }
 
 // ProviderSpec holds metadata loaded from specs/*.json.

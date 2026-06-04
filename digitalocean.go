@@ -73,13 +73,14 @@ func (d *DigitalOceanProvider) Plans(ctx context.Context, region string) ([]Plan
 			}
 		}
 		plans = append(plans, Plan{
-			ID:            s.Slug,
-			Name:          s.Slug,
-			CPUs:          s.VCPUs,
-			MemoryMB:      s.Memory,
-			DiskGB:        s.Disk,
-			MonthlyCents:  d.spec.EstimateMonthlyCost(s.Slug),
-			PriceCurrency: d.spec.PriceCurrency,
+			ID:              s.Slug,
+			Name:            s.Slug,
+			CPUs:            s.VCPUs,
+			MemoryMB:        s.Memory,
+			DiskGB:          s.Disk,
+			MonthlyCents:    d.spec.EstimateMonthlyCost(s.Slug),
+			PriceCurrency:   d.spec.PriceCurrency,
+			APIMonthlyCents: dollarsToCents(s.PriceMonthly),
 		})
 	}
 	return plans, nil

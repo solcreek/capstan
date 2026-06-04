@@ -51,6 +51,9 @@ func (l *LinodeProvider) Plans(ctx context.Context, region string) ([]Plan, erro
 			VCPUs  int    `json:"vcpus"`
 			Memory int    `json:"memory"`
 			Disk   int    `json:"disk"`
+			Price  struct {
+				Monthly float64 `json:"monthly"`
+			} `json:"price"`
 		} `json:"data"`
 	}
 	if err := l.http.GET(ctx, l.spec.BaseURL,"/linode/types?page_size=100", &resp); err != nil {
@@ -59,13 +62,14 @@ func (l *LinodeProvider) Plans(ctx context.Context, region string) ([]Plan, erro
 	plans := make([]Plan, len(resp.Data))
 	for i, t := range resp.Data {
 		plans[i] = Plan{
-			ID:            t.ID,
-			Name:          t.Label,
-			CPUs:          t.VCPUs,
-			MemoryMB:      t.Memory,
-			DiskGB:        t.Disk / 1024,
-			MonthlyCents:  l.spec.EstimateMonthlyCost(t.ID),
-			PriceCurrency: l.spec.PriceCurrency,
+			ID:              t.ID,
+			Name:            t.Label,
+			CPUs:            t.VCPUs,
+			MemoryMB:        t.Memory,
+			DiskGB:          t.Disk / 1024,
+			MonthlyCents:    l.spec.EstimateMonthlyCost(t.ID),
+			PriceCurrency:   l.spec.PriceCurrency,
+			APIMonthlyCents: dollarsToCents(t.Price.Monthly),
 		}
 	}
 	return plans, nil

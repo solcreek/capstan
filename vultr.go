@@ -47,10 +47,11 @@ func (v *VultrProvider) Regions(ctx context.Context) ([]Region, error) {
 func (v *VultrProvider) Plans(ctx context.Context, region string) ([]Plan, error) {
 	var resp struct {
 		Plans []struct {
-			ID       string `json:"id"`
-			VCPUCount int   `json:"vcpu_count"`
-			RAM      int    `json:"ram"`
-			Disk     int    `json:"disk"`
+			ID          string  `json:"id"`
+			VCPUCount   int     `json:"vcpu_count"`
+			RAM         int     `json:"ram"`
+			Disk        int     `json:"disk"`
+			MonthlyCost float64 `json:"monthly_cost"`
 		} `json:"plans"`
 	}
 	if err := v.http.GET(ctx, v.spec.BaseURL,"/plans?per_page=500", &resp); err != nil {
@@ -59,13 +60,14 @@ func (v *VultrProvider) Plans(ctx context.Context, region string) ([]Plan, error
 	plans := make([]Plan, len(resp.Plans))
 	for i, p := range resp.Plans {
 		plans[i] = Plan{
-			ID:            p.ID,
-			Name:          p.ID,
-			CPUs:          p.VCPUCount,
-			MemoryMB:      p.RAM,
-			DiskGB:        p.Disk,
-			MonthlyCents:  v.spec.EstimateMonthlyCost(p.ID),
-			PriceCurrency: v.spec.PriceCurrency,
+			ID:              p.ID,
+			Name:            p.ID,
+			CPUs:            p.VCPUCount,
+			MemoryMB:        p.RAM,
+			DiskGB:          p.Disk,
+			MonthlyCents:    v.spec.EstimateMonthlyCost(p.ID),
+			PriceCurrency:   v.spec.PriceCurrency,
+			APIMonthlyCents: dollarsToCents(p.MonthlyCost),
 		}
 	}
 	return plans, nil
