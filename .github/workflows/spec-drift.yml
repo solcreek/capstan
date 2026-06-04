@@ -84,11 +84,12 @@ jobs:
             echo "</details>"
           } >> "$GITHUB_STEP_SUMMARY"
 
-          # Tool exit 2 == "no token in env". For providers whose catalog
-          # endpoint needs auth (hetzner, digitalocean), this means the
-          # corresponding secret isn't configured — soft-skip rather
-          # than fail the matrix entry.
-          if [ $status -eq 2 ] && grep -q "no token in env" apply.log; then
+          # "no token in env" means the provider catalog needs auth
+          # (hetzner, digitalocean) and the corresponding secret isn't
+          # configured — soft-skip rather than fail the matrix entry.
+          # Match on the log message, not exit code: go run collapses
+          # any non-zero exit to 1, which would mask the tool's exit 2.
+          if grep -q "no token in env" apply.log; then
             echo "::warning::No token for ${{ matrix.provider }} — set HCLOUD_TOKEN or DO_API_KEY repo/org secret to enable"
             echo "skipped=true" >> "$GITHUB_OUTPUT"
             exit 0
