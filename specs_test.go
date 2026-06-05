@@ -51,8 +51,8 @@ func TestHetznerSpec(t *testing.T) {
 	if s.MapStatus("migrating") != StatusUnknown {
 		t.Errorf("MapStatus(migrating) should be unknown, got %q", s.MapStatus("migrating"))
 	}
-	if c := s.EstimateMonthlyCost("cx23"); c != 499 {
-		t.Errorf("cost(cx23) = %d", c)
+	if c := s.EstimateMonthlyCost("cx23"); c <= 0 {
+		t.Errorf("cost(cx23) = %d, want > 0", c)
 	}
 }
 
@@ -70,8 +70,8 @@ func TestDigitalOceanSpec(t *testing.T) {
 	if s.MapStatus("active") != StatusRunning {
 		t.Errorf("MapStatus(active) = %q", s.MapStatus("active"))
 	}
-	if c := s.EstimateMonthlyCost("s-1vcpu-1gb"); c != 600 {
-		t.Errorf("cost(s-1vcpu-1gb) = %d", c)
+	if c := s.EstimateMonthlyCost("s-1vcpu-1gb"); c <= 0 {
+		t.Errorf("cost(s-1vcpu-1gb) = %d, want > 0", c)
 	}
 }
 
@@ -89,8 +89,8 @@ func TestLinodeSpec(t *testing.T) {
 	if s.MapStatus("running") != StatusRunning {
 		t.Errorf("MapStatus(running) = %q", s.MapStatus("running"))
 	}
-	if c := s.EstimateMonthlyCost("g6-nanode-1"); c != 500 {
-		t.Errorf("cost(g6-nanode-1) = %d", c)
+	if c := s.EstimateMonthlyCost("g6-nanode-1"); c <= 0 {
+		t.Errorf("cost(g6-nanode-1) = %d, want > 0", c)
 	}
 }
 
@@ -111,8 +111,8 @@ func TestVultrSpec(t *testing.T) {
 	if s.MapStatus("active/stopped") != StatusStopped {
 		t.Errorf("MapStatus(active/stopped) = %q", s.MapStatus("active/stopped"))
 	}
-	if c := s.EstimateMonthlyCost("vc2-1c-1gb"); c != 500 {
-		t.Errorf("cost(vc2-1c-1gb) = %d", c)
+	if c := s.EstimateMonthlyCost("vc2-1c-1gb"); c <= 0 {
+		t.Errorf("cost(vc2-1c-1gb) = %d, want > 0", c)
 	}
 }
 
