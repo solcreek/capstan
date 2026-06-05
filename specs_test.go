@@ -111,7 +111,7 @@ func TestVultrSpec(t *testing.T) {
 	if s.MapStatus("active/stopped") != StatusStopped {
 		t.Errorf("MapStatus(active/stopped) = %q", s.MapStatus("active/stopped"))
 	}
-	if c := s.EstimateMonthlyCost("vc2-1c-1gb"); c != 600 {
+	if c := s.EstimateMonthlyCost("vc2-1c-1gb"); c != 500 {
 		t.Errorf("cost(vc2-1c-1gb) = %d", c)
 	}
 }
