@@ -1,6 +1,30 @@
 # Changelog
 
-## Unreleased
+## v0.6.0 — Per-location availability, APIMonthlyCents, spec-check auto-PR (Go)
+
+### Per-location server-type availability
+
+`ProviderSpec` gains `AvailableLocations map[string][]string` — the
+locations where each plan is actually *orderable*, which is distinct
+from merely having a price there. A provider can keep publishing a
+price for a (type, location) after it stops accepting new orders:
+`cpx11` still carries an `nbg1` price but is only orderable in
+`ash`/`hil`, so a Create in `nbg1` returns a 422.
+
+`ProviderSpec.IsAvailable(plan, location)` lets a consumer pre-validate
+the pair offline and fail fast with a clear message instead of hitting
+that 422 at Create time. It is permissive when data is absent (no
+availability for the provider, or an unspecced plan) so it never blocks
+on incomplete knowledge.
+
+The Hetzner provider implements the new optional `AvailabilityChecker`,
+deriving availability from `/datacenters` (`server_types.available`).
+`capstan-spec-check` validates per-location availability against the
+live API and persists it via `--apply`, so the weekly drift workflow
+keeps it fresh. Only Hetzner is mapped for now — other providers stay
+permissive until a consumer needs them. TS picks up the new spec data
+through the shared JSON import; no TS interface change (speculative
+parity stays out of scope).
 
 ### Plan.APIMonthlyCents + spec-check auto-PR
 
