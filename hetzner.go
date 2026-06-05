@@ -3,6 +3,7 @@ package capstan
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strconv"
 	"time"
 )
@@ -43,7 +44,7 @@ func (h *HetznerProvider) Regions(ctx context.Context) ([]Region, error) {
 			City        string `json:"city"`
 		} `json:"locations"`
 	}
-	if err := h.http.GET(ctx, h.spec.BaseURL,"/locations?per_page=50", &resp); err != nil {
+	if err := h.http.GET(ctx, h.spec.BaseURL, "/locations?per_page=50", &resp); err != nil {
 		return nil, err
 	}
 	regions := make([]Region, len(resp.Locations))
@@ -51,6 +52,69 @@ func (h *HetznerProvider) Regions(ctx context.Context) ([]Region, error) {
 		regions[i] = Region{ID: l.Name, Name: l.Description, Country: l.Country, City: l.City}
 	}
 	return regions, nil
+}
+
+// Availability reports which plans are orderable in which locations, read from
+// the live /datacenters endpoint (server_types.available). This is the
+// authoritative "orderable now" signal: /server_types still publishes a price
+// for a (type, location) after it stops accepting new orders there, so the
+// price-location filter Plans uses is too permissive (it would offer cpx11 in
+// nbg1 even though Hetzner rejects the Create with a 422). Returned map is plan
+// name -> sorted location names. Implements capstan.AvailabilityChecker.
+func (h *HetznerProvider) Availability(ctx context.Context) (map[string][]string, error) {
+	// /datacenters lists available server types as numeric IDs; resolve names.
+	var stResp struct {
+		ServerTypes []struct {
+			ID   int    `json:"id"`
+			Name string `json:"name"`
+		} `json:"server_types"`
+	}
+	if err := h.http.GET(ctx, h.spec.BaseURL, "/server_types?per_page=100", &stResp); err != nil {
+		return nil, err
+	}
+	idName := make(map[int]string, len(stResp.ServerTypes))
+	for _, t := range stResp.ServerTypes {
+		idName[t.ID] = t.Name
+	}
+
+	var dcResp struct {
+		Datacenters []struct {
+			Location struct {
+				Name string `json:"name"`
+			} `json:"location"`
+			ServerTypes struct {
+				Available []int `json:"available"`
+			} `json:"server_types"`
+		} `json:"datacenters"`
+	}
+	if err := h.http.GET(ctx, h.spec.BaseURL, "/datacenters?per_page=50", &dcResp); err != nil {
+		return nil, err
+	}
+
+	seen := make(map[string]map[string]bool)
+	for _, dc := range dcResp.Datacenters {
+		loc := dc.Location.Name
+		for _, id := range dc.ServerTypes.Available {
+			name := idName[id]
+			if name == "" {
+				continue
+			}
+			if seen[name] == nil {
+				seen[name] = make(map[string]bool)
+			}
+			seen[name][loc] = true
+		}
+	}
+	out := make(map[string][]string, len(seen))
+	for name, locs := range seen {
+		ls := make([]string, 0, len(locs))
+		for l := range locs {
+			ls = append(ls, l)
+		}
+		sort.Strings(ls)
+		out[name] = ls
+	}
+	return out, nil
 }
 
 func (h *HetznerProvider) Plans(ctx context.Context, region string) ([]Plan, error) {
@@ -70,7 +134,7 @@ func (h *HetznerProvider) Plans(ctx context.Context, region string) ([]Plan, err
 			} `json:"prices"`
 		} `json:"server_types"`
 	}
-	if err := h.http.GET(ctx, h.spec.BaseURL,"/server_types?per_page=50", &resp); err != nil {
+	if err := h.http.GET(ctx, h.spec.BaseURL, "/server_types?per_page=50", &resp); err != nil {
 		return nil, err
 	}
 	var plans []Plan
@@ -127,7 +191,7 @@ func (h *HetznerProvider) Create(ctx context.Context, opts CreateOpts) (*Server,
 	var resp struct {
 		Server hetznerServer `json:"server"`
 	}
-	if err := h.http.POST(ctx, h.spec.BaseURL,"/servers", body, &resp); err != nil {
+	if err := h.http.POST(ctx, h.spec.BaseURL, "/servers", body, &resp); err != nil {
 		return nil, err
 	}
 	return h.toServer(resp.Server), nil
@@ -137,7 +201,7 @@ func (h *HetznerProvider) Get(ctx context.Context, id string) (*Server, error) {
 	var resp struct {
 		Server hetznerServer `json:"server"`
 	}
-	if err := h.http.GET(ctx, h.spec.BaseURL,"/servers/"+id, &resp); err != nil {
+	if err := h.http.GET(ctx, h.spec.BaseURL, "/servers/"+id, &resp); err != nil {
 		return nil, err
 	}
 	return h.toServer(resp.Server), nil
@@ -169,15 +233,15 @@ func (h *HetznerProvider) List(ctx context.Context, opts ListOpts) ([]Server, er
 			Servers []hetznerServer `json:"servers"`
 			Meta    struct {
 				Pagination struct {
-					Page         int `json:"page"`
-					PerPage      int `json:"per_page"`
+					Page         int  `json:"page"`
+					PerPage      int  `json:"per_page"`
 					NextPage     *int `json:"next_page"`
-					LastPage     int `json:"last_page"`
-					TotalEntries int `json:"total_entries"`
+					LastPage     int  `json:"last_page"`
+					TotalEntries int  `json:"total_entries"`
 				} `json:"pagination"`
 			} `json:"meta"`
 		}
-		if err := h.http.GET(ctx, h.spec.BaseURL,path, &resp); err != nil {
+		if err := h.http.GET(ctx, h.spec.BaseURL, path, &resp); err != nil {
 			return nil, err
 		}
 		for _, s := range resp.Servers {
@@ -211,7 +275,7 @@ func (h *HetznerProvider) action(ctx context.Context, id, verb string) (*Action,
 	var resp struct {
 		Action hetznerAction `json:"action"`
 	}
-	if err := h.http.POST(ctx, h.spec.BaseURL,"/servers/"+id+"/actions/"+verb, map[string]any{}, &resp); err != nil {
+	if err := h.http.POST(ctx, h.spec.BaseURL, "/servers/"+id+"/actions/"+verb, map[string]any{}, &resp); err != nil {
 		return nil, err
 	}
 	return h.toAction(resp.Action), nil
@@ -222,7 +286,7 @@ func (h *HetznerProvider) WaitForAction(ctx context.Context, actionID string) (*
 		var resp struct {
 			Action hetznerAction `json:"action"`
 		}
-		if err := h.http.GET(ctx, h.spec.BaseURL,"/actions/"+actionID, &resp); err != nil {
+		if err := h.http.GET(ctx, h.spec.BaseURL, "/actions/"+actionID, &resp); err != nil {
 			return nil, err
 		}
 		a := h.toAction(resp.Action)
@@ -243,7 +307,7 @@ func (h *HetznerProvider) WaitForAction(ctx context.Context, actionID string) (*
 }
 
 func (h *HetznerProvider) Destroy(ctx context.Context, id string) error {
-	return h.http.DELETE(ctx, h.spec.BaseURL,"/servers/"+id)
+	return h.http.DELETE(ctx, h.spec.BaseURL, "/servers/"+id)
 }
 
 func (h *HetznerProvider) EstimateMonthlyCost(plan string) int {
@@ -284,12 +348,20 @@ type hetznerServer struct {
 	Name      string `json:"name"`
 	Status    string `json:"status"`
 	PublicNet *struct {
-		IPv4 *struct{ IP string `json:"ip"` } `json:"ipv4"`
-		IPv6 *struct{ IP string `json:"ip"` } `json:"ipv6"`
+		IPv4 *struct {
+			IP string `json:"ip"`
+		} `json:"ipv4"`
+		IPv6 *struct {
+			IP string `json:"ip"`
+		} `json:"ipv6"`
 	} `json:"public_net"`
-	ServerType *struct{ Name string `json:"name"` } `json:"server_type"`
+	ServerType *struct {
+		Name string `json:"name"`
+	} `json:"server_type"`
 	Datacenter *struct {
-		Location *struct{ Name string `json:"name"` } `json:"location"`
+		Location *struct {
+			Name string `json:"name"`
+		} `json:"location"`
 	} `json:"datacenter"`
 	Created string `json:"created"`
 }
@@ -315,4 +387,3 @@ func (h *HetznerProvider) toServer(s hetznerServer) *Server {
 	}
 	return srv
 }
-

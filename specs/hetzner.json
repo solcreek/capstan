@@ -39,5 +39,116 @@
     "ccx53": 29499,
     "ccx63": 44199
   },
-  "priceCurrency": "EUR"
+  "priceCurrency": "EUR",
+  "availableLocations": {
+    "ccx13": [
+      "fsn1",
+      "hel1",
+      "hil",
+      "nbg1",
+      "sin"
+    ],
+    "ccx23": [
+      "fsn1",
+      "hel1",
+      "hil",
+      "nbg1",
+      "sin"
+    ],
+    "ccx33": [
+      "fsn1",
+      "hel1",
+      "hil",
+      "nbg1",
+      "sin"
+    ],
+    "ccx43": [
+      "fsn1",
+      "hel1",
+      "hil",
+      "nbg1",
+      "sin"
+    ],
+    "ccx53": [
+      "fsn1",
+      "hel1",
+      "hil",
+      "nbg1",
+      "sin"
+    ],
+    "ccx63": [
+      "fsn1",
+      "hel1",
+      "hil",
+      "nbg1",
+      "sin"
+    ],
+    "cpx11": [
+      "ash",
+      "hil"
+    ],
+    "cpx12": [
+      "sin"
+    ],
+    "cpx21": [
+      "ash",
+      "hil"
+    ],
+    "cpx22": [
+      "fsn1",
+      "hel1",
+      "nbg1",
+      "sin"
+    ],
+    "cpx31": [
+      "ash",
+      "hil"
+    ],
+    "cpx32": [
+      "fsn1",
+      "hel1",
+      "nbg1",
+      "sin"
+    ],
+    "cpx41": [
+      "hil"
+    ],
+    "cpx42": [
+      "fsn1",
+      "hel1",
+      "nbg1",
+      "sin"
+    ],
+    "cpx51": [
+      "hil"
+    ],
+    "cpx52": [
+      "fsn1",
+      "hel1",
+      "nbg1",
+      "sin"
+    ],
+    "cpx62": [
+      "fsn1",
+      "hel1",
+      "nbg1",
+      "sin"
+    ],
+    "cx23": [
+      "fsn1",
+      "hel1",
+      "nbg1"
+    ],
+    "cx33": [
+      "fsn1",
+      "hel1",
+      "nbg1"
+    ],
+    "cx43": [
+      "nbg1"
+    ],
+    "cx53": [
+      "nbg1"
+    ]
+  }
 }

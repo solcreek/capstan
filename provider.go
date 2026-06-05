@@ -75,9 +75,9 @@ const (
 
 type Action struct {
 	ID        string       `json:"id"`
-	Command   string       `json:"command"`             // e.g. "start_server", "stop_server", "reboot"
+	Command   string       `json:"command"` // e.g. "start_server", "stop_server", "reboot"
 	Status    ActionStatus `json:"status"`
-	Progress  int          `json:"progress"`            // 0-100; not all providers populate this
+	Progress  int          `json:"progress"` // 0-100; not all providers populate this
 	Started   string       `json:"started,omitempty"`
 	Finished  string       `json:"finished,omitempty"`
 	ErrorCode string       `json:"errorCode,omitempty"`
@@ -157,6 +157,57 @@ type ProviderSpec struct {
 	StatusMap        map[string]string `json:"statusMap"`
 	PriceCents       map[string]int    `json:"priceCents"`
 	PriceCurrency    string            `json:"priceCurrency"`
+
+	// AvailableLocations maps a plan to the locations where it is currently
+	// ORDERABLE. This is distinct from having a price in a location: a provider
+	// can keep publishing a price for a plan in a region while no longer
+	// accepting new orders there (Hetzner does exactly this — cpx11 still has an
+	// nbg1 price but is only orderable in ash/hil). Sourced from the provider's
+	// availability endpoint (Hetzner: /datacenters server_types.available) and
+	// kept fresh by capstan-spec-check. Empty/absent => unknown, treated as
+	// permissive so an unmapped provider is never blocked. See IsAvailable.
+	AvailableLocations map[string][]string `json:"availableLocations,omitempty"`
+}
+
+// IsAvailable reports whether plan is orderable in location per the spec's
+// availability catalog. It is deliberately permissive when data is missing so
+// it never blocks on incomplete knowledge:
+//   - no AvailableLocations data at all (other providers, older spec) => true
+//   - plan absent from the map (e.g. a brand-new type not yet specced) => true
+//   - plan present but location not listed => false (the one case we block)
+//
+// This lets a consumer (e.g. dew server create) pre-validate a (plan, location)
+// pair offline and fail fast with a clear message instead of hitting a cryptic
+// provider 422 ("server type unavailable in location") at Create time.
+func (s *ProviderSpec) IsAvailable(plan, location string) bool {
+	if len(s.AvailableLocations) == 0 {
+		return true
+	}
+	locs, ok := s.AvailableLocations[plan]
+	if !ok {
+		return true
+	}
+	for _, l := range locs {
+		if l == location {
+			return true
+		}
+	}
+	return false
+}
+
+// AvailableLocationsFor returns the orderable locations for plan, or nil when
+// availability is unknown for it.
+func (s *ProviderSpec) AvailableLocationsFor(plan string) []string {
+	return s.AvailableLocations[plan]
+}
+
+// AvailabilityChecker is an optional capability: providers that can report which
+// plans are orderable in which locations implement it. capstan-spec-check uses
+// it to keep ProviderSpec.AvailableLocations in sync. Providers that don't
+// implement it simply have no availability data (IsAvailable stays permissive).
+type AvailabilityChecker interface {
+	// Availability returns plan -> sorted orderable locations from the live API.
+	Availability(ctx context.Context) (map[string][]string, error)
 }
 
 func LoadSpec(data []byte) (*ProviderSpec, error) {

@@ -97,10 +97,17 @@ type drift struct {
 	OnlyInSpec  []deprecatedItem `json:"onlyInSpec"`
 	OnlyInAPI   []string         `json:"onlyInAPI"`
 	InSyncCount int              `json:"inSyncCount"`
+
+	// Per-location availability drift (plan@location pairs). Only populated for
+	// providers that implement capstan.AvailabilityChecker.
+	AvailChecked    bool     `json:"availChecked"`
+	AvailOnlyInSpec []string `json:"availOnlyInSpec,omitempty"` // spec says orderable, API no longer does
+	AvailOnlyInAPI  []string `json:"availOnlyInAPI,omitempty"`  // newly orderable, missing from spec
 }
 
 func (d drift) hasDrift() bool {
-	return len(d.OnlyInSpec) > 0 || len(d.OnlyInAPI) > 0
+	return len(d.OnlyInSpec) > 0 || len(d.OnlyInAPI) > 0 ||
+		len(d.AvailOnlyInSpec) > 0 || len(d.AvailOnlyInAPI) > 0
 }
 
 func main() {
@@ -145,7 +152,17 @@ func main() {
 		os.Exit(2)
 	}
 
-	d := computeDrift(string(pName), plans, spec)
+	// Optional: providers that can report per-location orderability (Hetzner).
+	var liveAvail map[string][]string
+	if ac, ok := p.(capstan.AvailabilityChecker); ok {
+		liveAvail, err = ac.Availability(ctx)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "capstan-spec-check: Availability: %v\n", err)
+			os.Exit(2)
+		}
+	}
+
+	d := computeDrift(string(pName), plans, spec, liveAvail)
 
 	if *jsonOut {
 		json.NewEncoder(os.Stdout).Encode(d)
@@ -155,7 +172,7 @@ func main() {
 
 	if *apply {
 		path := filepath.Join(*specsDir, string(pName)+".json")
-		changed, err := applySpec(path, spec, plans)
+		changed, err := applySpec(path, spec, plans, liveAvail)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "capstan-spec-check: apply: %v\n", err)
 			os.Exit(2)
@@ -183,21 +200,22 @@ func main() {
 // If ProviderSpec gains new fields they need adding here too —
 // silently dropped otherwise. Small tax for diff cleanliness.
 type specWriteShape struct {
-	Name             string          `json:"name"`
-	DisplayName      string          `json:"displayName"`
-	BaseURL          string          `json:"baseUrl"`
-	DefaultImage     string          `json:"defaultImage"`
-	UserDataEncoding string          `json:"userDataEncoding"`
-	StatusMap        json.RawMessage `json:"statusMap"`
-	PriceCents       map[string]int  `json:"priceCents"`
-	PriceCurrency    string          `json:"priceCurrency"`
+	Name               string              `json:"name"`
+	DisplayName        string              `json:"displayName"`
+	BaseURL            string              `json:"baseUrl"`
+	DefaultImage       string              `json:"defaultImage"`
+	UserDataEncoding   string              `json:"userDataEncoding"`
+	StatusMap          json.RawMessage     `json:"statusMap"`
+	PriceCents         map[string]int      `json:"priceCents"`
+	PriceCurrency      string              `json:"priceCurrency"`
+	AvailableLocations map[string][]string `json:"availableLocations,omitempty"`
 }
 
 // applySpec rewrites the on-disk spec at path with priceCents rebuilt
 // from the live API plans. Returns true if the file actually changed —
 // the caller (or CI / PR action) uses that signal to decide whether
 // there's a PR worth opening.
-func applySpec(path string, spec *capstan.ProviderSpec, plans []capstan.Plan) (bool, error) {
+func applySpec(path string, spec *capstan.ProviderSpec, plans []capstan.Plan, liveAvail map[string][]string) (bool, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return false, fmt.Errorf("read %s: %w", path, err)
@@ -224,6 +242,11 @@ func applySpec(path string, spec *capstan.ProviderSpec, plans []capstan.Plan) (b
 		newPrices[pl.ID] = pl.APIMonthlyCents
 	}
 	current.PriceCents = newPrices
+	// Only refresh availability for providers that report it; otherwise preserve
+	// whatever the file already carried (decoded into current above).
+	if liveAvail != nil {
+		current.AvailableLocations = liveAvail
+	}
 
 	out, err := marshalSpec(&current)
 	if err != nil {
@@ -258,7 +281,7 @@ func marshalSpec(s *specWriteShape) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-func computeDrift(provider string, plans []capstan.Plan, spec *capstan.ProviderSpec) drift {
+func computeDrift(provider string, plans []capstan.Plan, spec *capstan.ProviderSpec, liveAvail map[string][]string) drift {
 	apiSet := make(map[string]bool, len(plans))
 	for _, pl := range plans {
 		apiSet[pl.ID] = true
@@ -279,7 +302,37 @@ func computeDrift(provider string, plans []capstan.Plan, spec *capstan.ProviderS
 	}
 	sort.Slice(d.OnlyInSpec, func(i, j int) bool { return d.OnlyInSpec[i].Name < d.OnlyInSpec[j].Name })
 	sort.Strings(d.OnlyInAPI)
+
+	// Per-location availability drift (only when the provider reports it).
+	if liveAvail != nil {
+		d.AvailChecked = true
+		specPairs := availPairs(spec.AvailableLocations)
+		apiPairs := availPairs(liveAvail)
+		for p := range specPairs {
+			if !apiPairs[p] {
+				d.AvailOnlyInSpec = append(d.AvailOnlyInSpec, p)
+			}
+		}
+		for p := range apiPairs {
+			if !specPairs[p] {
+				d.AvailOnlyInAPI = append(d.AvailOnlyInAPI, p)
+			}
+		}
+		sort.Strings(d.AvailOnlyInSpec)
+		sort.Strings(d.AvailOnlyInAPI)
+	}
 	return d
+}
+
+// availPairs flattens plan -> locations into a set of "plan@location" keys.
+func availPairs(m map[string][]string) map[string]bool {
+	out := make(map[string]bool)
+	for plan, locs := range m {
+		for _, loc := range locs {
+			out[plan+"@"+loc] = true
+		}
+	}
+	return out
 }
 
 func printMarkdown(w io.Writer, d drift) {
@@ -288,6 +341,9 @@ func printMarkdown(w io.Writer, d drift) {
 
 	if !d.hasDrift() {
 		fmt.Fprintf(w, "Spec is in sync with the live provider catalog (%d types).\n", d.InSyncCount)
+		if d.AvailChecked {
+			fmt.Fprintf(w, "Per-location availability also in sync.\n")
+		}
 		return
 	}
 
@@ -309,8 +365,29 @@ func printMarkdown(w io.Writer, d drift) {
 		fmt.Fprintln(w)
 	}
 
+	if len(d.AvailOnlyInSpec) > 0 {
+		fmt.Fprintf(w, "## No longer orderable — spec lists it, API does not\n\n")
+		fmt.Fprintf(w, "Refresh `availableLocations` in `specs/%s.json` (run with --apply):\n\n", d.Provider)
+		for _, p := range d.AvailOnlyInSpec {
+			fmt.Fprintf(w, "- `%s`\n", p)
+		}
+		fmt.Fprintln(w)
+	}
+	if len(d.AvailOnlyInAPI) > 0 {
+		fmt.Fprintf(w, "## Newly orderable — in API, missing from spec\n\n")
+		fmt.Fprintf(w, "Add to `availableLocations` in `specs/%s.json` (run with --apply):\n\n", d.Provider)
+		for _, p := range d.AvailOnlyInAPI {
+			fmt.Fprintf(w, "- `%s`\n", p)
+		}
+		fmt.Fprintln(w)
+	}
+
 	fmt.Fprintf(w, "## Summary\n\n")
 	fmt.Fprintf(w, "- In sync: %d\n", d.InSyncCount)
 	fmt.Fprintf(w, "- Deprecated (only in spec): %d\n", len(d.OnlyInSpec))
 	fmt.Fprintf(w, "- New (only in API): %d\n", len(d.OnlyInAPI))
+	if d.AvailChecked {
+		fmt.Fprintf(w, "- Availability no-longer-orderable (only in spec): %d\n", len(d.AvailOnlyInSpec))
+		fmt.Fprintf(w, "- Availability newly-orderable (only in API): %d\n", len(d.AvailOnlyInAPI))
+	}
 }

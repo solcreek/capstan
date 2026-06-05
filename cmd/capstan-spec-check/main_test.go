@@ -19,7 +19,7 @@ func TestComputeDriftAllInSync(t *testing.T) {
 			"cx23": 499, "cx33": 799, "cax11": 549,
 		},
 	}
-	d := computeDrift("hetzner", plans, spec)
+	d := computeDrift("hetzner", plans, spec, nil)
 	if d.hasDrift() {
 		t.Errorf("expected no drift, got OnlyInSpec=%v OnlyInAPI=%v", d.OnlyInSpec, d.OnlyInAPI)
 	}
@@ -38,7 +38,7 @@ func TestComputeDriftDeprecatedInSpec(t *testing.T) {
 			"cx22": 449, "cx23": 499, "cx33": 799,
 		},
 	}
-	d := computeDrift("hetzner", plans, spec)
+	d := computeDrift("hetzner", plans, spec, nil)
 	if !d.hasDrift() {
 		t.Fatal("expected drift, got none")
 	}
@@ -63,7 +63,7 @@ func TestComputeDriftNewInAPI(t *testing.T) {
 	spec := &capstan.ProviderSpec{
 		PriceCents: map[string]int{"cx23": 499, "cx33": 799},
 	}
-	d := computeDrift("hetzner", plans, spec)
+	d := computeDrift("hetzner", plans, spec, nil)
 	if !d.hasDrift() {
 		t.Fatal("expected drift")
 	}
@@ -82,7 +82,7 @@ func TestComputeDriftBothSides(t *testing.T) {
 			"cx23": 499, // in sync
 		},
 	}
-	d := computeDrift("hetzner", plans, spec)
+	d := computeDrift("hetzner", plans, spec, nil)
 	if len(d.OnlyInSpec) != 1 || d.OnlyInSpec[0].Name != "cx22" {
 		t.Errorf("OnlyInSpec mismatch: %v", d.OnlyInSpec)
 	}
@@ -132,7 +132,7 @@ func TestApplySpec_PriceCentsReplaced_OtherFieldsPreserved(t *testing.T) {
 		{ID: "g6-free", APIMonthlyCents: 0},
 	}
 
-	changed, err := applySpec(path, spec, plans)
+	changed, err := applySpec(path, spec, plans, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -170,7 +170,7 @@ func TestApplySpec_PriceCentsReplaced_OtherFieldsPreserved(t *testing.T) {
 	}
 
 	// Idempotent: second apply returns changed=false.
-	changed2, err := applySpec(path, spec, plans)
+	changed2, err := applySpec(path, spec, plans, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
